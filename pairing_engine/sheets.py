@@ -1,25 +1,56 @@
 """
-Google Sheets integration: pulls player predictions from the shared
-team spreadsheet using a service account (credentials come from
-Streamlit secrets, see .streamlit/secrets.toml.example).
+Google Sheets integration: pulls the "Matriz Simple" tab from the team's
+shared spreadsheet via its public CSV export URL. The sheet must be
+shared as "Anyone with the link -> Viewer" for this to work -- see the
+README for the privacy trade-off that implies (predictions are only as
+hidden as that URL).
 """
 
-import gspread
+from __future__ import annotations
+
+import re
+from urllib.parse import urlparse, parse_qs
+
 import pandas as pd
-from google.oauth2.service_account import Credentials
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-]
+_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
 
 
-def get_client(service_account_info: dict) -> gspread.Client:
-    creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-    return gspread.authorize(creds)
+def parse_sheet_url(sheet_url: str) -> tuple[str, str | None]:
+    """Extract (spreadsheet_id, gid) from a normal "shared link" Google
+    Sheets URL, e.g. https://docs.google.com/spreadsheets/d/<id>/edit?gid=<gid>#gid=<gid>.
+    gid is None if the URL doesn't specify a tab (falls back to the first sheet).
+    """
+    match = _ID_RE.search(sheet_url)
+    if not match:
+        raise ValueError(f"Couldn't find a spreadsheet ID in {sheet_url!r}")
+    spreadsheet_id = match.group(1)
+
+    parsed = urlparse(sheet_url)
+    gid = parse_qs(parsed.query).get("gid", [None])[0]
+    if gid is None and parsed.fragment:
+        gid = parse_qs(parsed.fragment).get("gid", [None])[0]
+    return spreadsheet_id, gid
 
 
-def load_predictions(client: gspread.Client, sheet_url: str, worksheet_name: str) -> pd.DataFrame:
-    sheet = client.open_by_url(sheet_url).worksheet(worksheet_name)
-    records = sheet.get_all_records()
-    return pd.DataFrame(records)
+def load_matrix(spreadsheet_id: str, gid: str | None = None) -> pd.DataFrame:
+    """Fetch one tab of a public Google Sheet as a raw DataFrame (first row
+    as column headers, no index set) -- ready to hand to
+    pairing_engine.imputation.matrices_from_raw_sheet().
+    """
+    url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv"
+    if gid is not None:
+        url += f"&gid={gid}"
+    try:
+        return pd.read_csv(url)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Couldn't fetch the sheet as CSV ({exc}). Make sure it's shared as "
+            f"\"Anyone with the link -> Viewer\" and the URL/tab is correct."
+        ) from exc
+
+
+def load_matrix_from_url(sheet_url: str) -> pd.DataFrame:
+    """Convenience: parse a full Google Sheets URL and fetch that tab directly."""
+    spreadsheet_id, gid = parse_sheet_url(sheet_url)
+    return load_matrix(spreadsheet_id, gid)
