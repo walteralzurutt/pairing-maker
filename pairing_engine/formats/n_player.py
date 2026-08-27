@@ -352,10 +352,11 @@ def worst_case_report(model: NPlayerModel, remA: Sequence, remB: Sequence) -> pd
             sacrificed = False
 
         if sacrificed:
-            note = (f"Sí: cede {(direct_other - direct):.2f} pts individuales aceptando a "
-                     f"{recommended} en vez de a {other}, pero mejora el resultado total del equipo.")
+            note = (f"Sí: aceptar a {recommended} nos cuesta {(direct_other - direct):.2f} puntos "
+                     f"frente a aceptar a {other} en el enfrentamiento directo del escudo, pero el "
+                     f"resultado total del equipo mejora.")
         else:
-            note = "No: la mejor opción individual del escudo también es la mejor para el equipo."
+            note = "No: la opción individualmente mejor para el escudo también es la mejor para el equipo."
 
         rows.append({
             "shield": a,

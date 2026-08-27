@@ -45,8 +45,8 @@ def _show_reports(my_label, my_report, opp_label, opp_report):
                    f"(peso de equilibrio {top['equilibrium_weight']:.0%})")
         mixers = my_report[my_report["equilibrium_weight"] > 0]
         if len(mixers) > 1:
-            st.warning("El equilibrio se mezcla entre varias opciones acá -- no hay una única "
-                       "elección siempre correcta. Alterná entre partidas más o menos en estas "
+            st.warning("El equilibrio se mezcla entre varias opciones aquí -- no hay una única "
+                       "elección siempre correcta. Alterna entre partidas más o menos en estas "
                        "proporciones:\n\n" + "\n".join(
                            f"- {_fmt_option(r['option'])}: {r['equilibrium_weight']:.0%}"
                            for _, r in mixers.iterrows()))
@@ -127,7 +127,7 @@ if session.history:
 # ---------------------------------------------------------------------
 
 if st.session_state.stage != "done":
-    st.header(f"Ronda {session.round_number} -- quedan {len(session.my_players)} jugadores por equipo")
+    st.header(f"Ronda {session.round_number} -- Quedan {len(session.my_players)} jugadores por equipo")
 
     # ---- Etapa 1: escudo -------------------------------------------------
     st.subheader("Etapa 1 -- Escudo")
@@ -135,7 +135,7 @@ if st.session_state.stage != "done":
     known_opponent_shield = None
     if session.round_number == 1 and st.session_state.stage == "shield":
         choice = st.selectbox(
-            "¿Ya sabés con certeza cuál será el escudo inicial del rival?",
+            "Si sabes con certeza cuál será el escudo rival, selecciónalo",
             [NO_LO_SE] + session.opp_players, key="known_opponent_shield_choice",
         )
         known_opponent_shield = None if choice == NO_LO_SE else choice
@@ -144,7 +144,15 @@ if st.session_state.stage != "done":
     _show_reports("Nuestras opciones", my_report, "Rival (predicción)", opp_report)
 
     if session.worst_case is not None:
-        with st.expander("Escenario peor caso (el rival ya conoce nuestro escudo y responde para perjudicarnos)"):
+        with st.expander("Escenario del peor caso"):
+            st.caption(
+                "La tabla de arriba asume que el rival juega su mezcla óptima habitual, sin saber "
+                "qué escudo vamos a elegir. Esta otra tabla muestra el escenario contrario: para "
+                "cada escudo que podríamos elegir, ¿qué pasaría si el rival ya conociera esa "
+                "elección de antemano y respondiera exactamente con la opción que más nos "
+                "perjudica? Así vemos cuánto podemos perder en el peor de los casos, no solo el "
+                "resultado promedio esperado."
+            )
             st.dataframe(session.worst_case.rename(columns=WORST_CASE_COLUMN_LABELS_ES),
                          hide_index=True, use_container_width=True)
 
