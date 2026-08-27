@@ -407,11 +407,26 @@ def espada_decision_report(s1, s2, throw1: Sequence, throw2: Sequence,
     return _option_report(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance)
 
 
+# Spanish display labels for the decision-report columns -- shared by
+# insight_sentences() below and by the UI layer when rendering a report
+# table, so the two stay consistent.
+COLUMN_LABELS_ES = {
+    "option": "Opción",
+    "vs_equilibrium_opponent": "Valor esperado",
+    "worst_case": "Peor caso",
+    "best_case": "Mejor caso",
+    "spread": "Volatilidad",
+    "equilibrium_weight": "Peso de equilibrio",
+    "gap_to_best": "Diferencia con la mejor",
+}
+
+
 def insight_sentences(report: pd.DataFrame, metric: str = "vs_equilibrium_opponent",
                        option_col: str = "option") -> list:
-    """Turn a decision report into plain-English comparison sentences, e.g.
-    'Choosing A1 instead of A3 is worth +10.40 points on vs_equilibrium_opponent.'
-    Always compares every option to the top-ranked (recommended) one.
+    """Turn a decision report into plain-language (Spanish) comparison
+    sentences, e.g. 'Elegir A1 en vez de A3 vale +10.40 puntos en Valor
+    esperado.' Always compares every option to the top-ranked
+    (recommended) one.
 
     Because the top row can be picked for having a lower `spread` rather
     than the strictly highest `vs_equilibrium_opponent` (see the
@@ -419,6 +434,7 @@ def insight_sentences(report: pd.DataFrame, metric: str = "vs_equilibrium_oppone
     out negative -- that just means the recommended pick is marginally
     lower on this metric but was preferred for being less volatile.
     """
+    metric_label = COLUMN_LABELS_ES.get(metric, metric)
     best_label = report.iloc[0][option_col]
     best_value = report.iloc[0][metric]
     sentences = []
@@ -427,10 +443,18 @@ def insight_sentences(report: pd.DataFrame, metric: str = "vs_equilibrium_oppone
             continue
         gap = best_value - row[metric]
         sentences.append(
-            f"Choosing {best_label} instead of {row[option_col]} is worth "
-            f"{gap:+.2f} points on '{metric}'."
+            f"Elegir {best_label} en vez de {row[option_col]} vale "
+            f"{gap:+.2f} puntos en {metric_label}."
         )
     return sentences
+
+
+SUMMARY_COLUMN_LABELS_ES = {
+    "matchup_type": "Tipo de partida",
+    "you": "Tú",
+    "opponent": "Rival",
+    "your_score": "Tu puntaje",
+}
 
 
 def summarize_matches(matches: list, my_team: str, my_total: float, opp_total: float) -> pd.DataFrame:
