@@ -11,17 +11,13 @@ A format module is expected to expose:
 
 n_player is the sole format: a recursive shield/swords/accept engine
 that handles any team size >= 3 (ported from a colleague's generalized
-notebook, replacing the earlier four_player-only implementation). The
-registry/get_format() seam is kept in case a genuinely different ruleset
-shows up later.
+notebook, replacing the earlier four_player-only implementation). If a
+genuinely different ruleset shows up later, reintroduce a registry keyed
+by whatever actually distinguishes them at that point.
 """
 
 from . import n_player
 
-FORMATS = {
-    "n_player": n_player,
-}
 
-
-def get_format(team_size: int):
+def get_format():
     return n_player

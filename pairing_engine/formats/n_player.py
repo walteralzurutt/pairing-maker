@@ -224,6 +224,32 @@ def build_model(escudo_df: pd.DataFrame, espada_df: pd.DataFrame, descarte_df: p
 # covers, so it's the correct pool to complement against for team2's view.
 # ---------------------------------------------------------------------
 
+def _stage_report(payoff: np.ndarray, solution, row_labels: Sequence, col_labels: Sequence,
+                   total_here: float, perspective: str, tie_tolerance: float, tie_break: bool) -> pd.DataFrame:
+    """Shared shape behind shield/swords/accept_decision_report: orient an
+    already-solved stage's payoff matrix for the requested perspective and
+    rank it via rank_options. `total_here` is 20 points per match times
+    however many players remain THIS round (not the full original team
+    size): that's exactly how many individual matches this round's value +
+    its recursive continuation covers, so it's the correct pool to
+    complement against for team2's view.
+    """
+    if perspective == "team1":
+        payoff_for_me = payoff
+        opp_strategy = solution.col_strategy
+        my_strategy = solution.row_strategy
+        option_labels = list(row_labels)
+    elif perspective == "team2":
+        payoff_for_me = (total_here - payoff).T
+        opp_strategy = solution.row_strategy
+        my_strategy = solution.col_strategy
+        option_labels = list(col_labels)
+    else:
+        raise ValueError("perspective must be 'team1' or 'team2'")
+
+    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
+
+
 def shield_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, perspective: str = "team1",
                             tie_tolerance: float = DEFAULT_TIE_TOLERANCE, tie_break: bool = True,
                             known_opponent_shield: Optional[str] = None) -> pd.DataFrame:
@@ -241,34 +267,30 @@ def shield_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, 
     """
     round_res = model.solve_round(remA, remB)
     total_here = 20.0 * len(round_res["remA"])
-    solution = round_res["solution"]
 
+    if known_opponent_shield is None:
+        return _stage_report(round_res["payoff"], round_res["solution"], round_res["remA"], round_res["remB"],
+                              total_here, perspective, tie_tolerance, tie_break)
+
+    # Deterministic conditioning: collapse to the single column/row for the
+    # declared shield instead of the ordinary equilibrium mix.
     if perspective == "team1":
         full_payoff = round_res["payoff"]
-        full_opp_strategy = solution.col_strategy
-        full_my_strategy = solution.row_strategy
         option_labels = list(round_res["remA"])
         rival_labels = list(round_res["remB"])
     elif perspective == "team2":
         full_payoff = (total_here - round_res["payoff"]).T
-        full_opp_strategy = solution.row_strategy
-        full_my_strategy = solution.col_strategy
         option_labels = list(round_res["remB"])
         rival_labels = list(round_res["remA"])
     else:
         raise ValueError("perspective must be 'team1' or 'team2'")
 
-    if known_opponent_shield is not None:
-        j = rival_labels.index(known_opponent_shield)
-        payoff_for_me = full_payoff[:, [j]]
-        opp_strategy = np.array([1.0])
-        best_idx = int(np.argmax(payoff_for_me[:, 0]))
-        my_strategy = np.zeros(len(option_labels))
-        my_strategy[best_idx] = 1.0
-    else:
-        payoff_for_me = full_payoff
-        opp_strategy = full_opp_strategy
-        my_strategy = full_my_strategy
+    j = rival_labels.index(known_opponent_shield)
+    payoff_for_me = full_payoff[:, [j]]
+    opp_strategy = np.array([1.0])
+    best_idx = int(np.argmax(payoff_for_me[:, 0]))
+    my_strategy = np.zeros(len(option_labels))
+    my_strategy[best_idx] = 1.0
 
     return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
 
@@ -280,22 +302,9 @@ def swords_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, 
     round_res = model.solve_round(remA, remB)
     total_here = 20.0 * len(round_res["remA"])
     swords_res = round_res["breakdown"][(shieldA, shieldB)]
-    solution = swords_res["solution"]
-
-    if perspective == "team1":
-        payoff_for_me = swords_res["payoff"]
-        opp_strategy = solution.col_strategy
-        my_strategy = solution.row_strategy
-        option_labels = swords_res["row_options"]
-    elif perspective == "team2":
-        payoff_for_me = (total_here - swords_res["payoff"]).T
-        opp_strategy = solution.row_strategy
-        my_strategy = solution.col_strategy
-        option_labels = swords_res["col_options"]
-    else:
-        raise ValueError("perspective must be 'team1' or 'team2'")
-
-    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
+    return _stage_report(swords_res["payoff"], swords_res["solution"],
+                          swords_res["row_options"], swords_res["col_options"],
+                          total_here, perspective, tie_tolerance, tie_break)
 
 
 def accept_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, shieldA, shieldB,
@@ -306,22 +315,9 @@ def accept_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, 
     total_here = 20.0 * len(round_res["remA"])
     swords_res = round_res["breakdown"][(shieldA, shieldB)]
     accept_res = swords_res["breakdown"][(swordsA, swordsB)]
-    solution = accept_res["solution"]
-
-    if perspective == "team1":
-        payoff_for_me = accept_res["payoff"]
-        opp_strategy = solution.col_strategy
-        my_strategy = solution.row_strategy
-        option_labels = accept_res["row_options"]
-    elif perspective == "team2":
-        payoff_for_me = (total_here - accept_res["payoff"]).T
-        opp_strategy = solution.row_strategy
-        my_strategy = solution.col_strategy
-        option_labels = accept_res["col_options"]
-    else:
-        raise ValueError("perspective must be 'team1' or 'team2'")
-
-    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
+    return _stage_report(accept_res["payoff"], accept_res["solution"],
+                          accept_res["row_options"], accept_res["col_options"],
+                          total_here, perspective, tie_tolerance, tie_break)
 
 
 # ---------------------------------------------------------------------

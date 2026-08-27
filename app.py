@@ -76,7 +76,7 @@ if st.button("Cargar / actualizar predicciones", type="primary"):
     try:
         raw = sheets.load_matrix_from_url(sheet_url)
         escudo, espada, descarte, was_imputed = matrices_from_raw_sheet(raw)
-        fmt = get_format(len(descarte.index))
+        fmt = get_format()
         model = fmt.build_model(escudo, espada, descarte)
     except Exception as exc:
         st.error(f"No se pudo cargar/armar el modelo: {exc}")
@@ -112,7 +112,7 @@ st.caption(f"Puntaje esperado por el modelo si ambos equipos juegan de forma óp
            f"{model.expected_team1_score:.1f} - {model.expected_team2_score:.1f} (sobre {total_pool})")
 
 if "session" not in st.session_state:
-    st.session_state.session = get_format(team_size).LivePairingSession(model, my_team=MY_TEAM)
+    st.session_state.session = get_format().LivePairingSession(model, my_team=MY_TEAM)
     st.session_state.stage = "shield"
 
 session = st.session_state.session

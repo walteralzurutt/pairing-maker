@@ -52,24 +52,10 @@ def _remove_dominated_rows(mat: np.ndarray, row_idx: list) -> list:
 
 
 def _remove_dominated_cols(mat: np.ndarray, col_idx: list) -> list:
-    col_idx = list(col_idx)
-    changed = True
-    while changed and len(col_idx) > 1:
-        changed = False
-        for j in col_idx:
-            for j2 in col_idx:
-                if j == j2:
-                    continue
-                col_j = mat[:, j]
-                col_j2 = mat[:, j2]
-                # j2 dominates j if it's always <= (weakly) and somewhere < (strictly)
-                if np.all(col_j2 <= col_j + 1e-9) and np.any(col_j2 < col_j - 1e-9):
-                    col_idx.remove(j)
-                    changed = True
-                    break
-            if changed:
-                break
-    return col_idx
+    # Column domination (minimizer prefers smaller) on `mat` is exactly row
+    # domination (maximizer prefers larger) on `-mat.T`: negating flips which
+    # direction is "better", and transposing turns columns into rows.
+    return _remove_dominated_rows(-mat.T, col_idx)
 
 
 def reduce_dominance(payoff: np.ndarray) -> tuple[list, list]:
