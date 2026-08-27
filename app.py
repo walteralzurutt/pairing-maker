@@ -21,10 +21,15 @@ st.title("Pairing Maker")
 st.caption("Recomendaciones de emparejamiento en vivo, basadas en teoría de juegos, para torneos competitivos de equipos de 40k.")
 
 
-def _reset():
-    for key in ("model", "escudo", "espada", "descarte", "was_imputed", "session", "stage",
-                "known_opponent_shield_choice"):
+def _reset_session():
+    for key in ("session", "stage", "known_opponent_shield_choice"):
         st.session_state.pop(key, None)
+
+
+def _reset_all():
+    for key in ("model", "escudo", "espada", "descarte", "was_imputed"):
+        st.session_state.pop(key, None)
+    _reset_session()
 
 
 def _fmt_option(opt):
@@ -76,7 +81,7 @@ if st.button("Cargar / actualizar predicciones", type="primary"):
     except Exception as exc:
         st.error(f"No se pudo cargar/armar el modelo: {exc}")
     else:
-        _reset()
+        _reset_all()
         st.session_state.model = model
         st.session_state.escudo, st.session_state.espada, st.session_state.descarte = escudo, espada, descarte
         st.session_state.was_imputed = was_imputed
@@ -132,15 +137,18 @@ if st.session_state.stage != "done":
     # ---- Etapa 1: escudo -------------------------------------------------
     st.subheader("Etapa 1 -- Escudo")
 
-    known_opponent_shield = None
-    if session.round_number == 1 and st.session_state.stage == "shield":
-        choice = st.selectbox(
-            "Si sabes con certeza cuál será el escudo rival, selecciónalo",
-            [NO_LO_SE] + session.opp_players, key="known_opponent_shield_choice",
-        )
-        known_opponent_shield = None if choice == NO_LO_SE else choice
+    if st.session_state.stage == "shield":
+        known_opponent_shield = None
+        if session.round_number == 1:
+            choice = st.selectbox(
+                "Si sabes con certeza cuál será el escudo rival, selecciónalo",
+                [NO_LO_SE] + session.opp_players, key="known_opponent_shield_choice",
+            )
+            known_opponent_shield = None if choice == NO_LO_SE else choice
+        my_report, opp_report = session.recommend_shield(known_opponent_shield=known_opponent_shield)
+    else:
+        my_report, opp_report = session.shield_reports
 
-    my_report, opp_report = session.recommend_shield(known_opponent_shield=known_opponent_shield)
     _show_reports("Nuestras opciones", my_report, "Rival (predicción)", opp_report)
 
     if session.worst_case is not None:
@@ -225,5 +233,5 @@ if st.session_state.stage == "done":
 
 if session.history:
     if st.button("Empezar una nueva partida"):
-        _reset()
+        _reset_session()
         st.rerun()

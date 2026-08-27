@@ -100,7 +100,8 @@ def rank_options(payoff_for_me: np.ndarray, opp_equilibrium_strategy: np.ndarray
 
     best_value = df["vs_equilibrium_opponent"].max()
     near_best_mask = (best_value - df["vs_equilibrium_opponent"]) <= tie_tolerance
-    near_best = df[near_best_mask].sort_values("spread", ascending=True)
+    near_best = df[near_best_mask].sort_values(
+        ["spread", "vs_equilibrium_opponent"], ascending=[True, False], kind="mergesort")
     rest = df[~near_best_mask].sort_values("vs_equilibrium_opponent", ascending=False)
     return pd.concat([near_best, rest]).reset_index(drop=True).round(2)
 

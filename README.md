@@ -27,6 +27,13 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Running tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ## Deployment
 
 Push to GitHub and deploy via [Streamlit Community Cloud](https://streamlit.io/cloud) (free tier).

@@ -26,6 +26,7 @@ formats.four_player established.
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass, field
 from typing import Optional, Sequence, Tuple
 
@@ -392,9 +393,11 @@ def explain_deviation(model: NPlayerModel, remA: Sequence, remB: Sequence,
 
     recommended, _ = _moda(accept_res["row_options"], solution.row_strategy)
     direct_values = {b: float(model.escudo_df.loc[shieldA, b]) for b in swordsB}
-    best_direct = max(direct_values, key=direct_values.get)
-    if best_direct == recommended:
+    if math.isclose(direct_values[recommended], max(direct_values.values()), abs_tol=1e-6):
+        # recommended already ties for individually-best -- nothing to explain,
+        # regardless of which tied option max() happens to return first
         return None
+    best_direct = max(direct_values, key=direct_values.get)
 
     Q = solution.col_strategy  # opponent shield's equilibrium mix over accepting our swordsA candidates
     payoff = accept_res["payoff"]
@@ -534,6 +537,16 @@ class LivePairingSession:
                                             known_opponent_shield=koc)
         opp_report = shield_decision_report(self.model, self.remA, self.remB, perspective=self.opp_team,
                                              tie_break=False)
+        if koc is not None:
+            # We're not predicting anymore -- we were told this for certain, so
+            # the "probable pick" must be the declared shield, not whatever the
+            # (now-irrelevant) equilibrium mix happens to favor.
+            opp_report = opp_report.copy()
+            opp_report["equilibrium_weight"] = 0.0
+            opp_report.loc[opp_report["option"] == koc, "equilibrium_weight"] = 1.0
+            opp_report = opp_report.sort_values(
+                ["equilibrium_weight", "vs_equilibrium_opponent"], ascending=[False, False]
+            ).reset_index(drop=True)
         self.shield_reports = (my_report, opp_report)
         self.worst_case = worst_case_report(self.model, self.remA, self.remB) if self.my_team == "team1" else None
         return my_report, opp_report
@@ -559,7 +572,9 @@ class LivePairingSession:
         my_swords, opp_swords = tuple(my_swords), tuple(opp_swords)
         self._validate_pair(my_swords, remaining_mine, "my_swords")
         self._validate_pair(opp_swords, remaining_theirs, "opp_swords")
-        self.my_swords, self.opp_swords = my_swords, opp_swords
+        # Normalize to the canonical (sorted) order used internally as breakdown-dict
+        # keys -- only membership should matter, not which order the pair was given in.
+        self.my_swords, self.opp_swords = tuple(sorted(my_swords)), tuple(sorted(opp_swords))
         return self.recommend_accept()
 
     # ---- Stage 3: accept ----------------------------------------------------

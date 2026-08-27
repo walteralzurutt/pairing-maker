@@ -14,6 +14,7 @@ from urllib.parse import urlparse, parse_qs
 import pandas as pd
 
 _ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
+_PUBLISHED_RE = re.compile(r"/spreadsheets/d/e/")
 
 
 def parse_sheet_url(sheet_url: str) -> tuple[str, str | None]:
@@ -21,6 +22,12 @@ def parse_sheet_url(sheet_url: str) -> tuple[str, str | None]:
     Sheets URL, e.g. https://docs.google.com/spreadsheets/d/<id>/edit?gid=<gid>#gid=<gid>.
     gid is None if the URL doesn't specify a tab (falls back to the first sheet).
     """
+    if _PUBLISHED_RE.search(sheet_url):
+        raise ValueError(
+            "This looks like a 'Publish to web' link, which isn't supported. Use the normal "
+            "Share link instead (Share -> General access -> Anyone with the link -> Viewer, "
+            "then copy the link from the Share dialog)."
+        )
     match = _ID_RE.search(sheet_url)
     if not match:
         raise ValueError(f"Couldn't find a spreadsheet ID in {sheet_url!r}")

@@ -23,6 +23,16 @@ MIN_SCORE, MAX_SCORE = 0.0, 20.0
 DEFAULT_DEPENDENCIA_SUFFIX = " Dependencia Mapa"
 
 
+def _check_no_duplicate_labels(df: pd.DataFrame) -> None:
+    dup_index = df.index[df.index.duplicated()].unique().tolist()
+    dup_columns = df.columns[df.columns.duplicated()].unique().tolist()
+    if dup_index or dup_columns:
+        raise ValueError(
+            f"descarte_df has duplicate labels -- rows: {dup_index}, columns: {dup_columns}. "
+            f"Every player name must be unique."
+        )
+
+
 def _validate_dependency_df(map_dependency_df: pd.DataFrame, descarte_df: pd.DataFrame) -> pd.DataFrame:
     """Reindex onto descarte_df's exact shape (missing rows/cols/cells -> NaN,
     which later becomes the default of 0), and warn about any out-of-range
@@ -75,6 +85,7 @@ def impute_dependent_matrices(
     """
     if descarte_df.isna().to_numpy().any():
         raise ValueError("descarte_df must be fully filled in -- it has no fallback/default of its own.")
+    _check_no_duplicate_labels(descarte_df)
 
     if map_dependency_df is None:
         dependency = pd.DataFrame(np.nan, index=descarte_df.index, columns=descarte_df.columns)
@@ -98,8 +109,8 @@ def impute_dependent_matrices(
     escudo_imputed_values = (descarte_df + dependency).clip(lower=MIN_SCORE, upper=MAX_SCORE)
     espada_imputed_values = (descarte_df - dependency).clip(lower=MIN_SCORE, upper=MAX_SCORE)
 
-    escudo_filled = escudo_df.where(~escudo_missing, escudo_imputed_values)
-    espada_filled = espada_df.where(~espada_missing, espada_imputed_values)
+    escudo_filled = escudo_df.where(~escudo_missing, escudo_imputed_values).clip(lower=MIN_SCORE, upper=MAX_SCORE)
+    espada_filled = espada_df.where(~espada_missing, espada_imputed_values).clip(lower=MIN_SCORE, upper=MAX_SCORE)
 
     was_imputed_df = escudo_missing | espada_missing
 
@@ -116,14 +127,23 @@ def set_index_from_leftover_column(raw_df: pd.DataFrame, dependencia_suffix: str
     index, so the result is ready for build_matrices_from_simple_format().
     """
     dep_cols = [c for c in raw_df.columns if c.endswith(dependencia_suffix)]
-    team2_players = [c[: -len(dependencia_suffix)] for c in dep_cols]
-    known_cols = set(team2_players) | set(dep_cols)
+    dep_opponents = {c[: -len(dependencia_suffix)] for c in dep_cols}
+    general_cols = [c for c in raw_df.columns if not c.endswith(dependencia_suffix)]
+    paired_opponents = {c for c in general_cols if c in dep_opponents}
 
-    leftover = [c for c in raw_df.columns if c not in known_cols]
+    missing_general = dep_opponents - set(general_cols)
+    if missing_general:
+        raise ValueError(
+            f"Dependency column(s) for {sorted(missing_general)} have no matching general score "
+            f"column -- check for a typo between the two column names."
+        )
+
+    leftover = [c for c in general_cols if c not in paired_opponents]
     if len(leftover) != 1:
         raise ValueError(
             f"Expected exactly 1 leftover label column, found {len(leftover)}: {leftover}. "
-            f"Couldn't auto-detect the Team1 player-name column."
+            f"If one of these is meant to be an opponent column, make sure it has a matching "
+            f"'{{name}}{dependencia_suffix}' column."
         )
     return raw_df.set_index(leftover[0])
 
