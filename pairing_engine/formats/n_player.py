@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 from ..zero_sum import solve_zero_sum_game
-from ..report import DEFAULT_TIE_TOLERANCE, rank_options
+from ..report import DEFAULT_TIE_TOLERANCE, rank_options, explain_naive_comparison
 
 MIN_TEAM_SIZE = 3  # shield + 2 sword-candidates needs at least this many
 
@@ -60,6 +60,26 @@ def _moda(labels: Sequence, strategy: np.ndarray):
     """The modal (highest-probability) label in an equilibrium strategy."""
     idx = int(np.argmax(strategy))
     return labels[idx], float(strategy[idx])
+
+
+# ---------------------------------------------------------------------
+# "Naive" baselines: the pick a human would make by eye, without any game
+# theory -- used to explain the equilibrium recommendation when it differs
+# (see explain_naive_comparison in pairing_engine.report). No new solving
+# here, just a simple heuristic over the raw matrices.
+# ---------------------------------------------------------------------
+
+def _naive_shield(escudo_df: pd.DataFrame, candidates: Sequence):
+    """The candidate with the best average escudo score across all
+    opponents -- "who's generally our strongest shield" by eye."""
+    return max(candidates, key=lambda p: escudo_df.loc[p, :].mean())
+
+
+def _naive_swords(descarte_df: pd.DataFrame, candidates: Sequence) -> tuple:
+    """The 2 candidates with the best average descarte score -- "throw your
+    2 strongest remaining players" by eye."""
+    ranked = sorted(candidates, key=lambda p: descarte_df.loc[p, :].mean(), reverse=True)
+    return tuple(sorted(ranked[:2]))
 
 
 # ---------------------------------------------------------------------
@@ -495,6 +515,8 @@ class LivePairingSession:
         self.swords_reports: Optional[Tuple[pd.DataFrame, pd.DataFrame]] = None
         self.accept_reports: Optional[Tuple[pd.DataFrame, pd.DataFrame]] = None
         self.worst_case: Optional[pd.DataFrame] = None
+        self.shield_explanation: Optional[str] = None
+        self.swords_explanation: Optional[str] = None
         self.deviation_explanation: Optional[str] = None
 
         self.history: list = []
@@ -545,6 +567,11 @@ class LivePairingSession:
             ).reset_index(drop=True)
         self.shield_reports = (my_report, opp_report)
         self.worst_case = worst_case_report(self.model, self.remA, self.remB) if self.my_team == "team1" else None
+        if self.my_team == "team1":
+            naive = _naive_shield(self.model.escudo_df, self.my_players)
+            self.shield_explanation = explain_naive_comparison(my_report, naive, "el mejor promedio en escudo")
+        else:
+            self.shield_explanation = None
         return my_report, opp_report
 
     def lock_shields(self, my_shield: str, opp_shield: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -560,6 +587,12 @@ class LivePairingSession:
         opp_report = swords_decision_report(self.model, self.remA, self.remB, s1, s2, perspective=self.opp_team,
                                              tie_break=False)
         self.swords_reports = (my_report, opp_report)
+        if self.my_team == "team1":
+            remaining = [p for p in self.my_players if p != self.my_shield]
+            naive = _naive_swords(self.model.descarte_df, remaining)
+            self.swords_explanation = explain_naive_comparison(my_report, naive, "tus 2 jugadores con mejor promedio en descarte")
+        else:
+            self.swords_explanation = None
         return my_report, opp_report
 
     def lock_swords(self, my_swords: Sequence[str], opp_swords: Sequence[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -642,6 +675,8 @@ class LivePairingSession:
         self.my_shield = self.opp_shield = self.my_swords = self.opp_swords = None
         self.shield_reports = self.swords_reports = self.accept_reports = None
         self.worst_case = None
+        self.shield_explanation = None
+        self.swords_explanation = None
         self.deviation_explanation = None
         return "continue"
 

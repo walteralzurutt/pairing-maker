@@ -5,7 +5,7 @@ from pairing_engine import sheets
 from pairing_engine.imputation import matrices_from_raw_sheet
 from pairing_engine.formats import get_format
 from pairing_engine.formats.n_player import SUMMARY_COLUMN_LABELS_ES, WORST_CASE_COLUMN_LABELS_ES, summarize_matches
-from pairing_engine.report import insight_sentences, COLUMN_LABELS_ES
+from pairing_engine.report import insight_sentences, COLUMN_LABELS_ES, format_option
 
 st.set_page_config(page_title="Pairing Maker", page_icon="⚔️", layout="wide")
 
@@ -32,10 +32,6 @@ def _reset_all():
     _reset_session()
 
 
-def _fmt_option(opt):
-    return " y ".join(opt) if isinstance(opt, tuple) else str(opt)
-
-
 def _display_report(report: pd.DataFrame) -> pd.DataFrame:
     return report.rename(columns=COLUMN_LABELS_ES)
 
@@ -46,14 +42,14 @@ def _show_reports(my_label, my_report, opp_label, opp_report):
         st.markdown(f"**{my_label}**")
         st.dataframe(_display_report(my_report), hide_index=True, use_container_width=True)
         top = my_report.iloc[0]
-        st.success(f"Recomendado: **{_fmt_option(top['option'])}** "
+        st.success(f"Recomendado: **{format_option(top['option'])}** "
                    f"(peso de equilibrio {top['equilibrium_weight']:.0%})")
         mixers = my_report[my_report["equilibrium_weight"] > 0]
         if len(mixers) > 1:
             st.warning("El equilibrio se mezcla entre varias opciones aquí -- no hay una única "
                        "elección siempre correcta. Alterna entre partidas más o menos en estas "
                        "proporciones:\n\n" + "\n".join(
-                           f"- {_fmt_option(r['option'])}: {r['equilibrium_weight']:.0%}"
+                           f"- {format_option(r['option'])}: {r['equilibrium_weight']:.0%}"
                            for _, r in mixers.iterrows()))
         for s in insight_sentences(my_report):
             st.caption(s)
@@ -61,7 +57,7 @@ def _show_reports(my_label, my_report, opp_label, opp_report):
         st.markdown(f"**{opp_label}** _(predicción -- confirmar cuando se revele)_")
         st.dataframe(_display_report(opp_report), hide_index=True, use_container_width=True)
         top = opp_report.iloc[0]
-        st.info(f"Elección probable si juegan racionalmente: **{_fmt_option(top['option'])}** "
+        st.info(f"Elección probable si juegan racionalmente: **{format_option(top['option'])}** "
                 f"(peso de equilibrio {top['equilibrium_weight']:.0%})")
 
 
@@ -151,6 +147,9 @@ if st.session_state.stage != "done":
 
     _show_reports("Nuestras opciones", my_report, "Rival (predicción)", opp_report)
 
+    if session.shield_explanation:
+        st.info(f"💡 {session.shield_explanation}")
+
     if session.worst_case is not None:
         with st.expander("Escenario del peor caso"):
             st.caption(
@@ -183,20 +182,23 @@ if st.session_state.stage != "done":
         my_report, opp_report = session.swords_reports
         _show_reports("Nuestras opciones", my_report, "Rival (predicción)", opp_report)
 
+        if session.swords_explanation:
+            st.info(f"💡 {session.swords_explanation}")
+
         if st.session_state.stage == "swords":
             c1, c2, c3 = st.columns([2, 2, 1])
             my_swords = c1.selectbox("Nuestras espadas reales", my_report["option"].tolist(),
-                                      format_func=_fmt_option)
+                                      format_func=format_option)
             opp_swords = c2.selectbox("Espadas reveladas del rival", opp_report["option"].tolist(),
-                                       format_func=_fmt_option)
+                                       format_func=format_option)
             if c3.button("Fijar espadas ->", type="primary"):
                 session.lock_swords(my_swords, opp_swords)
                 st.session_state.stage = "accept"
                 st.rerun()
 
     if st.session_state.stage == "accept":
-        st.info(f"Espadas fijadas -- nosotros: **{_fmt_option(session.my_swords)}**, "
-                f"rival: **{_fmt_option(session.opp_swords)}**")
+        st.info(f"Espadas fijadas -- nosotros: **{format_option(session.my_swords)}**, "
+                f"rival: **{format_option(session.opp_swords)}**")
 
         # ---- Etapa 3: aceptación --------------------------------------
         st.subheader("Etapa 3 -- Aceptación")

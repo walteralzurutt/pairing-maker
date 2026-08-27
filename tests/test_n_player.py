@@ -28,6 +28,53 @@ def test_recommend_shield_conditions_opp_report_too(sample_model):
 
 
 # ---------------------------------------------------------------------
+# Explainability: naive-baseline comparisons at every stage
+# ---------------------------------------------------------------------
+
+def test_naive_shield_prefers_best_average_escudo(sample_model):
+    naive = n_player._naive_shield(sample_model.escudo_df, sample_model.team1_players)
+    assert naive == "Marines"  # highest mean escudo score on the fixture data
+
+
+def test_naive_swords_prefers_best_average_descarte(sample_model):
+    remaining = [p for p in sample_model.team1_players if p != "Astra"]
+    naive = n_player._naive_swords(sample_model.descarte_df, remaining)
+    assert set(naive) == {"Marines", "Necron"}  # 2 highest mean descarte scores among the remaining 3
+
+
+def test_recommend_shield_sets_shield_explanation(sample_model):
+    session = n_player.LivePairingSession(sample_model, my_team="team1")
+    session.recommend_shield()
+    # on the fixture data the recommended shield (Marines) matches the naive
+    # pick too -- reassurance case
+    assert session.shield_explanation == (
+        "Esta opción también es el mejor promedio en escudo, así que coincide con lo que la "
+        "intuición sugeriría."
+    )
+
+
+def test_shield_explanation_flags_counterintuitive_pick():
+    """When the recommendation genuinely differs from the naive best-average
+    pick, the explanation must say so (not just reassure) -- found via a
+    fixed seed where the recommended shield ('A4') differs from the naive
+    best-average-escudo pick ('A2')."""
+    escudo, espada, descarte = _synthetic_matrices(4, seed=1)
+    model = n_player.build_model(escudo, espada, descarte)
+    session = n_player.LivePairingSession(model, my_team="team1")
+    my_report, _ = session.recommend_shield()
+
+    assert my_report.iloc[0]["option"] != n_player._naive_shield(escudo, model.team1_players)
+    assert "Aunque" in session.shield_explanation
+
+
+def test_recommend_swords_sets_swords_explanation(sample_model):
+    session = n_player.LivePairingSession(sample_model, my_team="team1")
+    my_report, opp_report = session.recommend_shield()
+    session.lock_shields(my_report.iloc[0]["option"], opp_report.iloc[0]["option"])
+    assert isinstance(session.swords_explanation, str) and session.swords_explanation
+
+
+# ---------------------------------------------------------------------
 # Phase 4 -- engine-level logic/robustness bugs
 # ---------------------------------------------------------------------
 
