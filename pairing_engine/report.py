@@ -144,14 +144,14 @@ def explain_naive_comparison(report: pd.DataFrame, naive_option, naive_label: st
     naive_rows = report[report[option_col].apply(lambda o: _options_match(o, naive_option))]
     if naive_rows.empty:
         return (f"El modelo recomienda {format_option(recommended)} tras considerar cómo conviene "
-                f"jugar el resto de la partida a partir de acá, no solo este enfrentamiento.")
+                f"jugar el resto de la partida a partir de aquí, no solo este enfrentamiento.")
 
     rec_value = report.iloc[0][metric]
     naive_value = naive_rows.iloc[0][metric]
     return (f"Aunque {format_option(naive_option)} parece la opción más intuitiva ({naive_label}), "
             f"el modelo recomienda {format_option(recommended)} porque vale {rec_value:.2f} puntos en "
             f"{metric_label}, frente a {naive_value:.2f} si eligieras {format_option(naive_option)} -- "
-            f"la diferencia viene de cómo conviene jugar el resto de la partida a partir de acá, no "
+            f"la diferencia viene de cómo conviene jugar el resto de la partida a partir de aquí, no "
             f"solo de este enfrentamiento en particular.")
 
 

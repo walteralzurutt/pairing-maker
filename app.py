@@ -96,7 +96,7 @@ st.caption(f"Nuestro equipo (filas de la planilla): {', '.join(model.team1_playe
 
 with st.expander("Matriz de predicciones (escudo / espada / descarte, y qué celdas se derivaron automáticamente)"):
     st.caption(
-        "Los valores son editables acá mismo -- útil para correcciones de último momento sin "
+        "Los valores son editables aquí mismo -- útil para correcciones de último momento sin "
         "tener que volver a la planilla. \"Aplicar cambios\" reinicia la ronda en curso con los "
         "valores actualizados."
     )
