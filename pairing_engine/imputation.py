@@ -23,6 +23,14 @@ MIN_SCORE, MAX_SCORE = 0.0, 20.0
 DEFAULT_DEPENDENCIA_SUFFIX = " Dependencia Mapa"
 
 
+def clip_scores(*dfs: pd.DataFrame) -> Tuple[pd.DataFrame, ...]:
+    """Clamp one or more score matrices to the valid [0, 20] range, shape/
+    labels untouched. Used both internally during imputation and to
+    sanitize hand-edited matrices coming back from the app's in-app editor.
+    """
+    return tuple(df.clip(lower=MIN_SCORE, upper=MAX_SCORE) for df in dfs)
+
+
 def _check_no_duplicate_labels(df: pd.DataFrame) -> None:
     dup_index = df.index[df.index.duplicated()].unique().tolist()
     dup_columns = df.columns[df.columns.duplicated()].unique().tolist()

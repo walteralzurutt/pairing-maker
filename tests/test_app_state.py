@@ -68,3 +68,54 @@ def test_new_match_button_keeps_loaded_predictions(sample_raw_df):
 
         assert not at.exception
         assert "model" in at.session_state, "loading a new match should not discard the loaded predictions"
+
+
+def test_editing_matrix_and_applying_rebuilds_model_and_resets_round(sample_raw_df):
+    """Editing a cell in the escudo data_editor and clicking 'Aplicar
+    cambios' must rebuild the model with the edited value and restart the
+    round, without needing to touch the source spreadsheet."""
+    at = _load_app(sample_raw_df)
+    with patch.object(sheets_module, "load_matrix_from_url", lambda url: sample_raw_df):
+        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == 8.0
+
+        # Simulate editing row 0 ("Death Guard"), column "Marines" -- this is
+        # the internal shape st.data_editor's widget state actually takes;
+        # AppTest has no dedicated data_editor interaction API to drive this
+        # through a higher-level call.
+        at.session_state["escudo_editor"] = {"edited_rows": {0: {"Marines": 18.0}},
+                                              "added_rows": [], "deleted_rows": []}
+        apply_btn = next(b for b in at.button if b.label == "Aplicar cambios a la matriz")
+        apply_btn.click().run()
+
+        assert not at.exception
+        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == 18.0
+        assert at.session_state["session"].model.escudo_df.loc["Death Guard", "Marines"] == 18.0
+        assert at.session_state["session"].round_number == 1  # round was reset, not carried over
+
+
+def test_reloading_a_different_sheet_clears_stale_editor_state(sample_raw_df):
+    """Regression/characterization: st.data_editor resets its cached edit
+    state when the underlying source data changes, even under the same
+    widget key -- so after a fresh 'Cargar predicciones' reload, clicking
+    "Aplicar cambios" again (without touching the editor) must NOT
+    silently reapply an edit made against the previous load.
+    """
+    at = _load_app(sample_raw_df)
+    with patch.object(sheets_module, "load_matrix_from_url", lambda url: sample_raw_df):
+        at.session_state["escudo_editor"] = {"edited_rows": {0: {"Marines": 15.0}},
+                                              "added_rows": [], "deleted_rows": []}
+        apply_btn = next(b for b in at.button if b.label == "Aplicar cambios a la matriz")
+        apply_btn.click().run()
+        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == 15.0  # edit applied
+
+        at.button[0].click().run()  # "Cargar / actualizar predicciones" again, no further edits
+
+        # click Apply again without touching the editor -- if the widget's
+        # stale state survived the reload, this silently reapplies 15.0
+        apply_btn = next(b for b in at.button if b.label == "Aplicar cambios a la matriz")
+        apply_btn.click().run()
+
+        assert not at.exception
+        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == 8.0, (
+            "stale data_editor state from the previous sheet load leaked into the fresh reload"
+        )

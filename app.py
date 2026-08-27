@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from pairing_engine import sheets
-from pairing_engine.imputation import matrices_from_raw_sheet
+from pairing_engine.imputation import matrices_from_raw_sheet, clip_scores
 from pairing_engine.formats import get_format
 from pairing_engine.formats.n_player import SUMMARY_COLUMN_LABELS_ES, WORST_CASE_COLUMN_LABELS_ES, summarize_matches
 from pairing_engine.report import insight_sentences, COLUMN_LABELS_ES, format_option
@@ -95,14 +95,32 @@ st.caption(f"Nuestro equipo (filas de la planilla): {', '.join(model.team1_playe
            f"— Rival (columnas): {', '.join(model.team2_players)}")
 
 with st.expander("Matriz de predicciones (escudo / espada / descarte, y qué celdas se derivaron automáticamente)"):
+    st.caption(
+        "Los valores son editables acá mismo -- útil para correcciones de último momento sin "
+        "tener que volver a la planilla. \"Aplicar cambios\" reinicia la ronda en curso con los "
+        "valores actualizados."
+    )
     st.markdown("**descarte** (base)")
-    st.dataframe(descarte, use_container_width=True)
+    descarte_edit = st.data_editor(descarte, num_rows="fixed", use_container_width=True, key="descarte_editor")
     st.markdown("**escudo** (con ventaja de mapa)")
-    st.dataframe(escudo, use_container_width=True)
+    escudo_edit = st.data_editor(escudo, num_rows="fixed", use_container_width=True, key="escudo_editor")
     st.markdown("**espada** (con penalización de mapa)")
-    st.dataframe(espada, use_container_width=True)
+    espada_edit = st.data_editor(espada, num_rows="fixed", use_container_width=True, key="espada_editor")
     st.markdown("**derivado automáticamente según dependencia de mapa** (True = no ingresado a mano)")
     st.dataframe(st.session_state.was_imputed, use_container_width=True)
+
+    if st.button("Aplicar cambios a la matriz"):
+        try:
+            new_escudo, new_espada, new_descarte = clip_scores(escudo_edit, espada_edit, descarte_edit)
+            new_model = get_format().build_model(new_escudo, new_espada, new_descarte)
+        except Exception as exc:
+            st.error(f"No se pudo aplicar los cambios: {exc}")
+        else:
+            st.session_state.model = new_model
+            st.session_state.escudo, st.session_state.espada, st.session_state.descarte = (
+                new_escudo, new_espada, new_descarte)
+            _reset_session()
+            st.rerun()
 
 st.caption(f"Puntaje esperado por el modelo si ambos equipos juegan de forma óptima: "
            f"{model.expected_team1_score:.1f} - {model.expected_team2_score:.1f} (sobre {total_pool})")

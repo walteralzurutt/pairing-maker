@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from pairing_engine.imputation import impute_dependent_matrices, matrices_from_raw_sheet
+from pairing_engine.imputation import clip_scores, impute_dependent_matrices, matrices_from_raw_sheet
 
 
 def test_matrices_from_real_sheet_fixture(sample_raw_df):
@@ -65,3 +65,17 @@ def test_duplicate_player_names_raise_clear_error():
     dependency = pd.DataFrame({"Ana": [2.0, 99.0]}, index=["Juan", "Juan"])  # 99 is out of range
     with pytest.raises(ValueError, match="[Dd]uplicat"):
         impute_dependent_matrices(descarte, map_dependency_df=dependency)
+
+
+def test_clip_scores_clamps_out_of_range_values():
+    """Used to sanitize hand-edited matrices coming back from the app's
+    in-app editor -- values outside [0, 20] must be clamped, shape/labels
+    preserved."""
+    df1 = pd.DataFrame({"B": [-5.0, 25.0, 10.0]}, index=["A1", "A2", "A3"])
+    df2 = pd.DataFrame({"B": [30.0, -1.0, 5.0]}, index=["A1", "A2", "A3"])
+
+    clipped1, clipped2 = clip_scores(df1, df2)
+
+    assert clipped1["B"].tolist() == [0.0, 20.0, 10.0]
+    assert clipped2["B"].tolist() == [20.0, 0.0, 5.0]
+    assert list(clipped1.index) == list(df1.index)
