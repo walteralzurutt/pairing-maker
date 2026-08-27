@@ -4,11 +4,12 @@ Game-theory-driven pairing recommendations for competitive Warhammer 40k team to
 
 ## Layout
 
-- `app.py` — Streamlit UI entry point; drives the live shield/throw/espada walkthrough for one match.
-- `pairing_engine/zero_sum.py` — generic zero-sum game LP solver, shared by every pairing format.
+- `app.py` — Streamlit UI entry point; drives the live shield/espadas/aceptación walkthrough, looping round by round until every player is paired.
+- `pairing_engine/zero_sum.py` — generic zero-sum game LP solver (with dominance reduction), shared by every pairing format.
+- `pairing_engine/report.py` — format-agnostic decision-report ranking/tie-break helpers, shared by every pairing format.
 - `pairing_engine/imputation.py` — parses the "Matriz Simple" spreadsheet tab and derives the full escudo/espada/descarte matrices.
 - `pairing_engine/sheets.py` — fetches a tab of the shared Google Sheet via its public CSV export URL.
-- `pairing_engine/formats/four_player.py` — the 4-player-specific pairing algorithm (ported from the original notebook). A future N-player algorithm goes in a sibling module here, registered in `pairing_engine/formats/__init__.py`.
+- `pairing_engine/formats/n_player.py` — the pairing algorithm: recurses round by round (shield → swords → accept) to support any team size ≥ 3, not just 4.
 - `assets/factions/` — faction logo images used in the UI.
 
 ## Spreadsheet input
