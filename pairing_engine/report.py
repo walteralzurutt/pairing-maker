@@ -32,7 +32,7 @@ COLUMN_LABELS_ES = {
 
 def rank_options(payoff_for_me: np.ndarray, opp_equilibrium_strategy: np.ndarray,
                   my_equilibrium_strategy: np.ndarray, option_labels: Sequence,
-                  tie_tolerance: float = DEFAULT_TIE_TOLERANCE) -> pd.DataFrame:
+                  tie_tolerance: float = DEFAULT_TIE_TOLERANCE, tie_break: bool = True) -> pd.DataFrame:
     """Given a payoff matrix already oriented so rows = my options, columns =
     opponent options, and values = MY score (higher is better for me),
     report the expected outcome for each option assuming the opponent
@@ -67,6 +67,18 @@ def rank_options(payoff_for_me: np.ndarray, opp_equilibrium_strategy: np.ndarray
     than the highest raw value. Options clearly outside that tolerance are
     still ranked purely by `vs_equilibrium_opponent`, below the near-best
     group.
+
+    That spread-based override is only valid for describing what WE
+    should pick -- we're genuinely free to choose the safer of two
+    near-tied options. It is NOT valid for predicting what an opponent
+    will do: when two of their options tie on value, the specific
+    equilibrium the solver returned already picked how to split weight
+    between them (possibly 100/0), and that IS the actual prediction.
+    Overriding it with our own risk preference can promote a 0%-weight
+    option to row 0, contradicting the `equilibrium_weight` column right
+    next to it. Pass `tie_break=False` for opponent-prediction reports to
+    sort strictly by `equilibrium_weight` (then `vs_equilibrium_opponent`)
+    instead.
     """
     vs_equilibrium_opp = payoff_for_me @ opp_equilibrium_strategy
     worst_case = payoff_for_me.min(axis=1)
@@ -81,6 +93,10 @@ def rank_options(payoff_for_me: np.ndarray, opp_equilibrium_strategy: np.ndarray
         "equilibrium_weight": np.round(my_equilibrium_strategy, 4),
     })
     df["gap_to_best"] = (df["vs_equilibrium_opponent"] - df["vs_equilibrium_opponent"].max()).round(2)
+
+    if not tie_break:
+        return df.sort_values(["equilibrium_weight", "vs_equilibrium_opponent"],
+                               ascending=[False, False]).reset_index(drop=True).round(2)
 
     best_value = df["vs_equilibrium_opponent"].max()
     near_best_mask = (best_value - df["vs_equilibrium_opponent"]) <= tie_tolerance

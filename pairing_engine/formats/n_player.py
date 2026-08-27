@@ -224,13 +224,19 @@ def build_model(escudo_df: pd.DataFrame, espada_df: pd.DataFrame, descarte_df: p
 # ---------------------------------------------------------------------
 
 def shield_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, perspective: str = "team1",
-                            tie_tolerance: float = DEFAULT_TIE_TOLERANCE,
+                            tie_tolerance: float = DEFAULT_TIE_TOLERANCE, tie_break: bool = True,
                             known_opponent_shield: Optional[str] = None) -> pd.DataFrame:
     """Stage-1 (shield) insight table. If `known_opponent_shield` is given,
     conditions on that shield being certain rather than a mix (used for the
     "I already know their shield" pre-declaration before round 1) --
     reduces to a deterministic single-column ranking, still tie-broken the
-    same way via rank_options.
+    same way via rank_options (when tie_break=True).
+
+    Pass tie_break=True (default) when this table describes OUR OWN
+    options -- the near-tie/lower-spread override is valid advice there.
+    Pass tie_break=False when predicting the OPPONENT's likely pick, so
+    the top row reflects their actual equilibrium weight instead (see
+    rank_options' docstring for why).
     """
     round_res = model.solve_round(remA, remB)
     total_here = 20.0 * len(round_res["remA"])
@@ -263,11 +269,12 @@ def shield_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, 
         opp_strategy = full_opp_strategy
         my_strategy = full_my_strategy
 
-    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance)
+    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
 
 
 def swords_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, shieldA, shieldB,
-                            perspective: str = "team1", tie_tolerance: float = DEFAULT_TIE_TOLERANCE) -> pd.DataFrame:
+                            perspective: str = "team1", tie_tolerance: float = DEFAULT_TIE_TOLERANCE,
+                            tie_break: bool = True) -> pd.DataFrame:
     """Stage-2 (swords) insight table for an already-known shield pair."""
     round_res = model.solve_round(remA, remB)
     total_here = 20.0 * len(round_res["remA"])
@@ -287,12 +294,12 @@ def swords_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, 
     else:
         raise ValueError("perspective must be 'team1' or 'team2'")
 
-    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance)
+    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
 
 
 def accept_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, shieldA, shieldB,
                             swordsA: Sequence, swordsB: Sequence, perspective: str = "team1",
-                            tie_tolerance: float = DEFAULT_TIE_TOLERANCE) -> pd.DataFrame:
+                            tie_tolerance: float = DEFAULT_TIE_TOLERANCE, tie_break: bool = True) -> pd.DataFrame:
     """Stage-3 (accept) insight table for already-known shields AND swords."""
     round_res = model.solve_round(remA, remB)
     total_here = 20.0 * len(round_res["remA"])
@@ -313,7 +320,7 @@ def accept_decision_report(model: NPlayerModel, remA: Sequence, remB: Sequence, 
     else:
         raise ValueError("perspective must be 'team1' or 'team2'")
 
-    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance)
+    return rank_options(payoff_for_me, opp_strategy, my_strategy, option_labels, tie_tolerance, tie_break)
 
 
 # ---------------------------------------------------------------------
@@ -525,7 +532,8 @@ class LivePairingSession:
         koc = known_opponent_shield if self.round_number == 1 else None
         my_report = shield_decision_report(self.model, self.remA, self.remB, perspective=self.my_team,
                                             known_opponent_shield=koc)
-        opp_report = shield_decision_report(self.model, self.remA, self.remB, perspective=self.opp_team)
+        opp_report = shield_decision_report(self.model, self.remA, self.remB, perspective=self.opp_team,
+                                             tie_break=False)
         self.shield_reports = (my_report, opp_report)
         self.worst_case = worst_case_report(self.model, self.remA, self.remB) if self.my_team == "team1" else None
         return my_report, opp_report
@@ -540,7 +548,8 @@ class LivePairingSession:
     def recommend_swords(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         s1, s2 = self._to_team1_team2(self.my_shield, self.opp_shield)
         my_report = swords_decision_report(self.model, self.remA, self.remB, s1, s2, perspective=self.my_team)
-        opp_report = swords_decision_report(self.model, self.remA, self.remB, s1, s2, perspective=self.opp_team)
+        opp_report = swords_decision_report(self.model, self.remA, self.remB, s1, s2, perspective=self.opp_team,
+                                             tie_break=False)
         self.swords_reports = (my_report, opp_report)
         return my_report, opp_report
 
@@ -558,7 +567,8 @@ class LivePairingSession:
         s1, s2 = self._to_team1_team2(self.my_shield, self.opp_shield)
         t1, t2 = self._to_team1_team2(self.my_swords, self.opp_swords)
         my_report = accept_decision_report(self.model, self.remA, self.remB, s1, s2, t1, t2, perspective=self.my_team)
-        opp_report = accept_decision_report(self.model, self.remA, self.remB, s1, s2, t1, t2, perspective=self.opp_team)
+        opp_report = accept_decision_report(self.model, self.remA, self.remB, s1, s2, t1, t2,
+                                             perspective=self.opp_team, tie_break=False)
         self.accept_reports = (my_report, opp_report)
         self.deviation_explanation = (
             explain_deviation(self.model, self.remA, self.remB, s1, s2, t1, t2)
