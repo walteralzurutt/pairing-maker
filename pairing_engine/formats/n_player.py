@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 
 from ..zero_sum import solve_zero_sum_game
-from ..report import DEFAULT_TIE_TOLERANCE, rank_options, explain_naive_comparison
+from ..report import DEFAULT_TIE_TOLERANCE, rank_options, format_option
 
 MIN_TEAM_SIZE = 3  # shield + 2 sword-candidates needs at least this many
 
@@ -62,11 +62,16 @@ def _moda(labels: Sequence, strategy: np.ndarray):
     return labels[idx], float(strategy[idx])
 
 
+def _swords_match(a: tuple, b: tuple) -> bool:
+    """Two sword pairs are the same pick regardless of tuple order."""
+    return set(a) == set(b)
+
+
 # ---------------------------------------------------------------------
 # "Naive" baselines: the pick a human would make by eye, without any game
 # theory -- used to explain the equilibrium recommendation when it differs
-# (see explain_naive_comparison in pairing_engine.report). No new solving
-# here, just a simple heuristic over the raw matrices.
+# (see _explain_shield_choice/_explain_swords_choice below). No new
+# solving here, just a simple heuristic over the raw matrices.
 # ---------------------------------------------------------------------
 
 def _naive_shield(escudo_df: pd.DataFrame, candidates: Sequence):
@@ -80,6 +85,96 @@ def _naive_swords(descarte_df: pd.DataFrame, candidates: Sequence) -> tuple:
     2 strongest remaining players" by eye."""
     ranked = sorted(candidates, key=lambda p: descarte_df.loc[p, :].mean(), reverse=True)
     return tuple(sorted(ranked[:2]))
+
+
+# ---------------------------------------------------------------------
+# Representative outcome tracing: walk the single most-likely (modal)
+# path forward through the nested subgame for one specific candidate
+# choice, grounding the naive-vs-recommended comparison in a concrete,
+# named matchup with an actual probability -- not just an abstract point
+# gap. No new solving: everything here is already memoized in the
+# round's breakdown dict.
+# ---------------------------------------------------------------------
+
+def _representative_shield_outcome(round_res: dict, shield, opp_shield):
+    """Assuming the opponent plays `opp_shield` (their modal pick), who do
+    we most likely end up fighting (escudo role) if we pick `shield`, and
+    how likely is that specific outcome? Walks: both sides' modal swords
+    -> our shield's modal accept."""
+    swords_res = round_res["breakdown"][(shield, opp_shield)]
+    swordsA_modal, _ = _moda(swords_res["row_options"], swords_res["solution"].row_strategy)
+    swordsB_modal, p_swordsB = _moda(swords_res["col_options"], swords_res["solution"].col_strategy)
+    accept_res = swords_res["breakdown"][(swordsA_modal, swordsB_modal)]
+    opponent, p_accept = _moda(accept_res["row_options"], accept_res["solution"].row_strategy)
+    return opponent, p_swordsB * p_accept
+
+
+def _representative_swords_outcome(swords_res: dict, my_swords):
+    """Assuming the opponent throws their modal pick, which of `my_swords`
+    do they most likely accept (espada role), and how likely is that?"""
+    swordsB_modal, p_swordsB = _moda(swords_res["col_options"], swords_res["solution"].col_strategy)
+    accept_res = swords_res["breakdown"][(my_swords, swordsB_modal)]
+    my_accepted, p_accept = _moda(accept_res["col_options"], accept_res["solution"].col_strategy)
+    return my_accepted, p_swordsB * p_accept
+
+
+def _explain_shield_choice(model: "NPlayerModel", round_res: dict, recommended, naive) -> str:
+    opp_shield, _ = _moda(round_res["remB"], round_res["solution"].col_strategy)
+    opp_rec, p_rec = _representative_shield_outcome(round_res, recommended, opp_shield)
+    val_rec = float(model.escudo_df.loc[recommended, opp_rec])
+
+    if recommended == naive:
+        return (f"Asumiendo que el escudo rival es {opp_shield} (su elección más probable), hay "
+                f"una probabilidad del {p_rec:.0%} de que tu escudo ({recommended}) termine "
+                f"enfrentando a {opp_rec}, ganando {val_rec:.1f} puntos. Esta también es la opción "
+                f"con mejor promedio individual, así que coincide con la intuición.")
+
+    opp_naive, p_naive = _representative_shield_outcome(round_res, naive, opp_shield)
+    val_naive = float(model.escudo_df.loc[naive, opp_naive])
+
+    msg = (f"Asumiendo que el escudo rival es {opp_shield} (su elección más probable): con tu "
+           f"escudo recomendado ({recommended}) hay un {p_rec:.0%} de probabilidad de enfrentar a "
+           f"{opp_rec}, ganando {val_rec:.1f} puntos. Con {naive} (el de mejor promedio individual), "
+           f"hay un {p_naive:.0%} de enfrentar a {opp_naive}, ganando {val_naive:.1f} puntos.")
+
+    if val_rec < val_naive:
+        row_idx = {p: i for i, p in enumerate(round_res["remA"])}
+        avg_rec = float(round_res["payoff"][row_idx[recommended], :] @ round_res["solution"].col_strategy)
+        avg_naive = float(round_res["payoff"][row_idx[naive], :] @ round_res["solution"].col_strategy)
+        msg += (f" Aunque en este escenario concreto {naive} rendiría más, {recommended} sigue "
+                f"siendo mejor en promedio contra todas las respuestas posibles del rival "
+                f"({avg_rec:.1f} vs {avg_naive:.1f} puntos esperados).")
+    return msg
+
+
+def _explain_swords_choice(model: "NPlayerModel", swords_res: dict, shieldB, recommended, naive) -> str:
+    swordsB_modal, _ = _moda(swords_res["col_options"], swords_res["solution"].col_strategy)
+    acc_rec, p_rec = _representative_swords_outcome(swords_res, recommended)
+    val_rec = float(model.espada_df.loc[acc_rec, shieldB])
+
+    if _swords_match(recommended, naive):
+        return (f"Asumiendo que el rival lanza a {format_option(swordsB_modal)} (su elección más "
+                f"probable), hay una probabilidad del {p_rec:.0%} de que el escudo rival acepte a "
+                f"{acc_rec}, ganando {val_rec:.1f} puntos. Esta también es la opción con mejor "
+                f"promedio individual, así que coincide con la intuición.")
+
+    acc_naive, p_naive = _representative_swords_outcome(swords_res, naive)
+    val_naive = float(model.espada_df.loc[acc_naive, shieldB])
+
+    msg = (f"Asumiendo que el rival lanza a {format_option(swordsB_modal)} (su elección más "
+           f"probable): con tus espadas recomendadas ({format_option(recommended)}) hay un "
+           f"{p_rec:.0%} de que el escudo rival acepte a {acc_rec}, ganando {val_rec:.1f} puntos. "
+           f"Con {format_option(naive)} (mejor promedio individual), hay un {p_naive:.0%} de que "
+           f"acepte a {acc_naive}, ganando {val_naive:.1f} puntos.")
+
+    if val_rec < val_naive:
+        row_idx = {opt: i for i, opt in enumerate(swords_res["row_options"])}
+        avg_rec = float(swords_res["payoff"][row_idx[recommended], :] @ swords_res["solution"].col_strategy)
+        avg_naive = float(swords_res["payoff"][row_idx[naive], :] @ swords_res["solution"].col_strategy)
+        msg += (f" Aunque en este escenario concreto {format_option(naive)} rendiría más, "
+                f"{format_option(recommended)} sigue siendo mejor en promedio contra todas las "
+                f"respuestas posibles del rival ({avg_rec:.1f} vs {avg_naive:.1f} puntos esperados).")
+    return msg
 
 
 # ---------------------------------------------------------------------
@@ -569,7 +664,9 @@ class LivePairingSession:
         self.worst_case = worst_case_report(self.model, self.remA, self.remB) if self.my_team == "team1" else None
         if self.my_team == "team1":
             naive = _naive_shield(self.model.escudo_df, self.my_players)
-            self.shield_explanation = explain_naive_comparison(my_report, naive, "el mejor promedio en escudo")
+            round_res = self.model.solve_round(self.remA, self.remB)
+            self.shield_explanation = _explain_shield_choice(
+                self.model, round_res, my_report.iloc[0]["option"], naive)
         else:
             self.shield_explanation = None
         return my_report, opp_report
@@ -590,7 +687,10 @@ class LivePairingSession:
         if self.my_team == "team1":
             remaining = [p for p in self.my_players if p != self.my_shield]
             naive = _naive_swords(self.model.descarte_df, remaining)
-            self.swords_explanation = explain_naive_comparison(my_report, naive, "tus 2 jugadores con mejor promedio en descarte")
+            round_res = self.model.solve_round(self.remA, self.remB)
+            swords_res = round_res["breakdown"][(s1, s2)]
+            self.swords_explanation = _explain_swords_choice(
+                self.model, swords_res, s2, my_report.iloc[0]["option"], naive)
         else:
             self.swords_explanation = None
         return my_report, opp_report

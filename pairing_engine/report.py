@@ -112,49 +112,6 @@ def format_option(option) -> str:
     return " y ".join(option) if isinstance(option, tuple) else str(option)
 
 
-def _options_match(a, b) -> bool:
-    """Two options are the same pick regardless of tuple order (a 2-player
-    swords choice doesn't care which name came first)."""
-    if isinstance(a, tuple) or isinstance(b, tuple):
-        return set(a) == set(b)
-    return a == b
-
-
-def explain_naive_comparison(report: pd.DataFrame, naive_option, naive_label: str,
-                              option_col: str = "option", metric: str = "vs_equilibrium_opponent") -> str:
-    """Always returns a plain-language sentence explaining the top-ranked
-    (recommended) option relative to a simpler heuristic pick a human might
-    make without game theory (`naive_option`, described by `naive_label`,
-    e.g. "el mejor promedio en escudo"). No new solving happens here --
-    `naive_option`'s value is just another row already present in `report`.
-
-    - If the recommendation already matches the naive pick, returns a short
-      reassurance -- there's nothing counterintuitive to explain.
-    - If they differ, explains the recommendation is worth more on `metric`
-      even though the naive pick looks better at first glance, framing the
-      gap as coming from how the rest of the match plays out from here.
-    """
-    recommended = report.iloc[0][option_col]
-    metric_label = COLUMN_LABELS_ES.get(metric, metric).lower()
-
-    if _options_match(recommended, naive_option):
-        return (f"Esta opción también es {naive_label}, así que coincide con lo que la intuición "
-                f"sugeriría.")
-
-    naive_rows = report[report[option_col].apply(lambda o: _options_match(o, naive_option))]
-    if naive_rows.empty:
-        return (f"El modelo recomienda {format_option(recommended)} tras considerar cómo conviene "
-                f"jugar el resto de la partida a partir de aquí, no solo este enfrentamiento.")
-
-    rec_value = report.iloc[0][metric]
-    naive_value = naive_rows.iloc[0][metric]
-    return (f"Aunque {format_option(naive_option)} parece la opción más intuitiva ({naive_label}), "
-            f"el modelo recomienda {format_option(recommended)} porque vale {rec_value:.2f} puntos en "
-            f"{metric_label}, frente a {naive_value:.2f} si eligieras {format_option(naive_option)} -- "
-            f"la diferencia viene de cómo conviene jugar el resto de la partida a partir de aquí, no "
-            f"solo de este enfrentamiento en particular.")
-
-
 def insight_sentences(report: pd.DataFrame, metric: str = "vs_equilibrium_opponent",
                        option_col: str = "option") -> list:
     """Turn a decision report into plain-language (Spanish) comparison

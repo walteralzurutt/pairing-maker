@@ -46,25 +46,38 @@ def test_recommend_shield_sets_shield_explanation(sample_model):
     session = n_player.LivePairingSession(sample_model, my_team="team1")
     session.recommend_shield()
     # on the fixture data the recommended shield (Marines) matches the naive
-    # pick too -- reassurance case
+    # pick too -- reassurance case, but still names the concrete predicted
+    # matchup/probability/points rather than a bare "coincide" one-liner
     assert session.shield_explanation == (
-        "Esta opción también es el mejor promedio en escudo, así que coincide con lo que la "
-        "intuición sugeriría."
+        "Asumiendo que el escudo rival es Necron (su elección más probable), hay una probabilidad "
+        "del 30% de que tu escudo (Marines) termine enfrentando a Marines, ganando 12.0 puntos. "
+        "Esta también es la opción con mejor promedio individual, así que coincide con la intuición."
     )
 
 
 def test_shield_explanation_flags_counterintuitive_pick():
     """When the recommendation genuinely differs from the naive best-average
-    pick, the explanation must say so (not just reassure) -- found via a
-    fixed seed where the recommended shield ('A4') differs from the naive
-    best-average-escudo pick ('A2')."""
+    pick, the explanation must name the concrete predicted matchup,
+    probability, and point value for BOTH options -- not just a bare point
+    gap -- found via a fixed seed ('A4' recommended vs 'A2' naive) that
+    also exercises the "sacrifice" case: the naive pick's own traced
+    outcome (10.7 pts) actually beats the recommendation's (10.0 pts), so
+    the explanation must justify the recommendation via the broader
+    equilibrium average rather than this one scenario.
+    """
     escudo, espada, descarte = _synthetic_matrices(4, seed=1)
     model = n_player.build_model(escudo, espada, descarte)
     session = n_player.LivePairingSession(model, my_team="team1")
     my_report, _ = session.recommend_shield()
 
     assert my_report.iloc[0]["option"] != n_player._naive_shield(escudo, model.team1_players)
-    assert "Aunque" in session.shield_explanation
+    assert session.shield_explanation == (
+        "Asumiendo que el escudo rival es B3 (su elección más probable): con tu escudo recomendado "
+        "(A4) hay un 100% de probabilidad de enfrentar a B4, ganando 10.0 puntos. Con A2 (el de "
+        "mejor promedio individual), hay un 69% de enfrentar a B2, ganando 10.7 puntos. Aunque en "
+        "este escenario concreto A2 rendiría más, A4 sigue siendo mejor en promedio contra todas "
+        "las respuestas posibles del rival (43.0 vs 43.0 puntos esperados)."
+    )
 
 
 def test_recommend_swords_sets_swords_explanation(sample_model):
@@ -72,6 +85,28 @@ def test_recommend_swords_sets_swords_explanation(sample_model):
     my_report, opp_report = session.recommend_shield()
     session.lock_shields(my_report.iloc[0]["option"], opp_report.iloc[0]["option"])
     assert isinstance(session.swords_explanation, str) and session.swords_explanation
+
+
+def test_swords_explanation_flags_counterintuitive_pick():
+    """Same "sacrifice" case as the shield-stage test, at the swords stage:
+    found via a fixed seed where the recommended throw (A1, A4) beats the
+    naive best-average-descarte throw (A2, A4) in equilibrium, even though
+    the naive throw's own traced outcome (13.2 pts) beats the
+    recommendation's (2.1 pts).
+    """
+    escudo, espada, descarte = _synthetic_matrices(4, seed=18)
+    model = n_player.build_model(escudo, espada, descarte)
+    session = n_player.LivePairingSession(model, my_team="team1")
+    my_report, opp_report = session.recommend_shield()
+    session.lock_shields(my_report.iloc[0]["option"], opp_report.iloc[0]["option"])
+
+    assert session.swords_explanation == (
+        "Asumiendo que el rival lanza a B2 y B3 (su elección más probable): con tus espadas "
+        "recomendadas (A1 y A4) hay un 100% de que el escudo rival acepte a A1, ganando 2.1 puntos. "
+        "Con A2 y A4 (mejor promedio individual), hay un 100% de que acepte a A4, ganando 13.2 "
+        "puntos. Aunque en este escenario concreto A2 y A4 rendiría más, A1 y A4 sigue siendo mejor "
+        "en promedio contra todas las respuestas posibles del rival (40.7 vs 35.5 puntos esperados)."
+    )
 
 
 # ---------------------------------------------------------------------
