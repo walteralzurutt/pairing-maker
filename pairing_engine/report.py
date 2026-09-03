@@ -9,7 +9,7 @@ only on an already-solved payoff matrix + equilibrium strategies.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -104,6 +104,22 @@ def rank_options(payoff_for_me: np.ndarray, opp_equilibrium_strategy: np.ndarray
         ["spread", "vs_equilibrium_opponent"], ascending=[True, False], kind="mergesort")
     rest = df[~near_best_mask].sort_values("vs_equilibrium_opponent", ascending=False)
     return pd.concat([near_best, rest]).reset_index(drop=True).round(2)
+
+
+def tie_break_note(report: pd.DataFrame) -> Optional[str]:
+    """Transparency note for the case where rank_options' spread tie-break
+    (see its docstring above) promoted a lower-weight option to row 0
+    instead of whichever option actually carries the (co-)highest
+    equilibrium weight -- e.g. the equilibrium mostly favors A, but B is
+    recommended here for having less volatility. Returns None when row 0
+    already holds the (co-)highest weight, i.e. no tie-break was needed.
+    """
+    top = report.iloc[0]
+    heavy = report.loc[report["equilibrium_weight"].idxmax()]
+    if heavy["equilibrium_weight"] <= top["equilibrium_weight"]:
+        return None
+    return (f"El peso de equilibrio favorece a {format_option(heavy['option'])}, pero "
+            f"{format_option(top['option'])} tiene menor volatilidad.")
 
 
 def format_option(option) -> str:

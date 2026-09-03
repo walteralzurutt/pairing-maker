@@ -5,7 +5,7 @@ from pairing_engine import sheets
 from pairing_engine.imputation import matrices_from_raw_sheet, clip_scores
 from pairing_engine.formats import get_format
 from pairing_engine.formats.n_player import SUMMARY_COLUMN_LABELS_ES, WORST_CASE_COLUMN_LABELS_ES, summarize_matches
-from pairing_engine.report import insight_sentences, COLUMN_LABELS_ES, format_option
+from pairing_engine.report import insight_sentences, tie_break_note, COLUMN_LABELS_ES, format_option
 
 st.set_page_config(page_title="Pairing Maker", page_icon="⚔️", layout="wide")
 
@@ -44,6 +44,9 @@ def _show_reports(my_label, my_report, opp_label, opp_report):
         top = my_report.iloc[0]
         st.success(f"Recomendado: **{format_option(top['option'])}** "
                    f"(peso de equilibrio {top['equilibrium_weight']:.0%})")
+        tie_note = tie_break_note(my_report)
+        if tie_note:
+            st.caption(f"ℹ️ {tie_note}")
         mixers = my_report[my_report["equilibrium_weight"] > 0]
         if len(mixers) > 1:
             st.warning("El equilibrio se mezcla entre varias opciones aquí -- no hay una única "

@@ -1,6 +1,6 @@
 import numpy as np
 
-from pairing_engine.report import rank_options, format_option
+from pairing_engine.report import rank_options, tie_break_note, format_option
 
 
 def test_tie_break_false_sorts_by_equilibrium_weight():
@@ -55,3 +55,41 @@ def test_tie_break_true_prefers_best_value_when_spread_is_uniform():
 def test_format_option():
     assert format_option("Astra") == "Astra"
     assert format_option(("A1", "A2")) == "A1 y A2"
+
+
+def test_tie_break_note_flags_when_recommendation_differs_from_equilibrium_weight():
+    """When the near-tie/lower-spread override (rank_options) promotes a
+    0%-weight option to row 0 over the option that actually holds the
+    equilibrium weight, tie_break_note must surface that discrepancy."""
+    option_labels = ["Ultramarines", "Death Guard"]
+    payoff_for_me = np.array([
+        [10.0, 10.0],  # Ultramarines: low spread
+        [10.5, 9.0],   # Death Guard: higher average, but wider spread
+    ])
+    opp_equilibrium_strategy = np.array([0.5, 0.5])
+    my_equilibrium_strategy = np.array([0.0, 1.0])  # equilibrium is all on Death Guard
+
+    report = rank_options(payoff_for_me, opp_equilibrium_strategy, my_equilibrium_strategy,
+                           option_labels, tie_break=True)
+
+    assert report.iloc[0]["option"] == "Ultramarines"
+    assert report.iloc[0]["equilibrium_weight"] == 0.0
+
+    note = tie_break_note(report)
+    assert note == ("El peso de equilibrio favorece a Death Guard, pero Ultramarines tiene "
+                     "menor volatilidad.")
+
+
+def test_tie_break_note_is_none_when_recommendation_already_holds_the_weight():
+    option_labels = ["A_player", "B_player"]
+    payoff_for_me = np.array([
+        [10.5],
+        [9.0],
+    ])
+    opp_equilibrium_strategy = np.array([1.0])
+    my_equilibrium_strategy = np.array([1.0, 0.0])
+
+    report = rank_options(payoff_for_me, opp_equilibrium_strategy, my_equilibrium_strategy,
+                           option_labels, tie_break=True)
+
+    assert tie_break_note(report) is None
