@@ -49,8 +49,8 @@ def test_recommend_shield_sets_shield_explanation(sample_model):
     # pick too -- reassurance case, but still names the concrete predicted
     # matchup/probability/points rather than a bare "coincide" one-liner
     assert session.shield_explanation == (
-        "Asumiendo que el escudo rival es Necron (su elección más probable), hay una probabilidad "
-        "del 30% de que tu escudo (Marines) termine enfrentando a Marines, ganando 12.0 puntos. "
+        "Asumiendo que el escudo rival es IK (su elección más probable), hay una probabilidad "
+        "del 60% de que tu escudo (Marines) termine enfrentando a Necron, ganando 20.0 puntos. "
         "Esta también es la opción con mejor promedio individual, así que coincide con la intuición."
     )
 

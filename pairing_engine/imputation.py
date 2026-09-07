@@ -2,9 +2,13 @@
 Spreadsheet-format bridging and map-dependency imputation.
 
 Players normally only fill in one "general" score per matchup (descarte_df)
-plus how map-dependent that matchup is (0-10). This derives the full
+plus how map-dependent that matchup is, both on the player-facing 1-7 scale
+(1 = worst/least, 7 = best/most) -- see INPUT_MIN_SCORE/INPUT_MAX_SCORE and
+INPUT_MIN_DEPENDENCY/INPUT_MAX_DEPENDENCY below. Those get linearly rescaled
+onto the internal [0, 20]/[0, 10] ranges the rest of the engine (zero_sum,
+formats.n_player) actually computes with, before this derives the full
 escudo_df ("shield", scores boosted by map dependency) and espada_df
-("sword", scores reduced by map dependency) from that, while still trusting
+("sword", scores reduced by map dependency) from that -- while still trusting
 any cells a team filled in by hand instead. None of this assumes any
 particular number of players per team -- it operates on whatever
 Team1-rows x Team2-columns matrix shape it's given.
@@ -20,6 +24,11 @@ import pandas as pd
 DEFAULT_MAP_DEPENDENCY = 0.0
 MIN_DEPENDENCY, MAX_DEPENDENCY = 0.0, 10.0
 MIN_SCORE, MAX_SCORE = 0.0, 20.0
+# Player-facing "Matriz Simple" input scale -- both the general score and the
+# map-dependency columns use this same 1-7 range, rescaled onto the internal
+# ranges above by _rescale_input_block() in build_matrices_from_simple_format.
+INPUT_MIN_SCORE, INPUT_MAX_SCORE = 1.0, 7.0
+INPUT_MIN_DEPENDENCY, INPUT_MAX_DEPENDENCY = 1.0, 7.0
 DEFAULT_DEPENDENCIA_SUFFIX = " Dependencia Mapa"
 
 
@@ -156,6 +165,29 @@ def set_index_from_leftover_column(raw_df: pd.DataFrame, dependencia_suffix: str
     return raw_df.set_index(leftover[0])
 
 
+def _rescale_input_block(df: pd.DataFrame, in_min: float, in_max: float,
+                          out_min: float, out_max: float, label: str) -> pd.DataFrame:
+    """Linearly rescale a raw "Matriz Simple" input block (values expected in
+    [in_min, in_max], e.g. the player-facing 1-7 score) onto the internal
+    [out_min, out_max] range the rest of the engine computes with (e.g. the
+    0-20 descarte scale). NaN cells (blank in the sheet) pass through
+    unchanged -- they're filled in later by impute_dependent_matrices'
+    defaults, not here.
+
+    Raises if any non-NaN cell falls outside [in_min, in_max] -- almost
+    always a typo, a stray formula, or a cell still on the old scale.
+    """
+    out_of_range = df[(df < in_min) | (df > in_max)]
+    if out_of_range.notna().to_numpy().any():
+        bad_cells = [(i, j, df.loc[i, j]) for i in df.index for j in df.columns
+                     if pd.notna(df.loc[i, j]) and not (in_min <= df.loc[i, j] <= in_max)]
+        raise ValueError(
+            f"{label} has {len(bad_cells)} value(s) outside the valid [{in_min}, {in_max}] "
+            f"range, e.g. {bad_cells[:5]}."
+        )
+    return (df - in_min) / (in_max - in_min) * (out_max - out_min) + out_min
+
+
 def build_matrices_from_simple_format(
     escudo_df: Optional[pd.DataFrame],
     espada_df: Optional[pd.DataFrame],
@@ -165,13 +197,18 @@ def build_matrices_from_simple_format(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Bridge for the "Matriz Simple" input format: one row per Team1
     player (as the index), and for each Team2 opponent `p` two columns --
-    `p` (the general/default score, equivalent to a descarte_df cell) and
-    `f"{p}{dependencia_suffix}"` (that matchup's map-dependency, 0-10).
+    `p` (the general/default score) and `f"{p}{dependencia_suffix}"` (that
+    matchup's map-dependency). Both are on the player-facing 1-7 scale (see
+    INPUT_MIN_SCORE/INPUT_MAX_SCORE and INPUT_MIN_DEPENDENCY/
+    INPUT_MAX_DEPENDENCY) and get rescaled here onto the internal 0-20/0-10
+    ranges (MIN_SCORE/MAX_SCORE, MIN_DEPENDENCY/MAX_DEPENDENCY) before
+    anything else touches them.
 
     Any of escudo_df/espada_df/descarte_df can be None or partially
     filled -- real cells always win; descarte_df falls back to the
-    matriz_simple general column, and escudo_df/espada_df fall back to
-    descarte (+/-) that matchup's dependency, via impute_dependent_matrices.
+    matriz_simple general column (post-rescale), and escudo_df/espada_df
+    fall back to descarte (+/-) that matchup's dependency (post-rescale),
+    via impute_dependent_matrices.
 
     Returns (escudo_filled, espada_filled, descarte_filled, was_imputed_df).
     """
@@ -179,9 +216,15 @@ def build_matrices_from_simple_format(
     team1_players = matriz_simple_df.index
 
     general_df = matriz_simple_df[team2_players].reindex(index=team1_players, columns=team2_players)
+    general_df = _rescale_input_block(general_df, INPUT_MIN_SCORE, INPUT_MAX_SCORE, MIN_SCORE, MAX_SCORE,
+                                       "matriz_simple_df's general score columns")
+
     dependency_df = matriz_simple_df[[f"{p}{dependencia_suffix}" for p in team2_players]].copy()
     dependency_df.columns = team2_players
     dependency_df = dependency_df.reindex(index=team1_players, columns=team2_players)
+    dependency_df = _rescale_input_block(dependency_df, INPUT_MIN_DEPENDENCY, INPUT_MAX_DEPENDENCY,
+                                          MIN_DEPENDENCY, MAX_DEPENDENCY,
+                                          "matriz_simple_df's map-dependency columns")
 
     if descarte_df is None:
         descarte_df = pd.DataFrame(np.nan, index=team1_players, columns=team2_players)

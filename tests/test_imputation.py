@@ -4,6 +4,50 @@ import pytest
 from pairing_engine.imputation import clip_scores, impute_dependent_matrices, matrices_from_raw_sheet
 
 
+def _raw_sheet(general, dependency):
+    return pd.DataFrame({
+        "Player": ["P1"],
+        "Ana": [general],
+        "Ana Dependencia Mapa": [dependency],
+    })
+
+
+def test_1_to_7_input_scale_rescales_onto_internal_0_to_20_and_0_to_10():
+    """The "Matriz Simple" sheet is filled in on the player-facing 1-7 scale
+    (1 = worst/least, 7 = best/most) for both the general score and the
+    map-dependency column; both must land on the internal 0-20/0-10 scale
+    the rest of the engine (escudo/espada/descarte) actually computes with.
+    """
+    # general=7 (best) -> descarte 20; dependency=7 (matters a lot) -> 10,
+    # so escudo (descarte + dependency, clipped) is also 20 and espada
+    # (descarte - dependency, clipped) is 10.
+    escudo, espada, descarte, _ = matrices_from_raw_sheet(_raw_sheet(general=7.0, dependency=7.0))
+    assert descarte.loc["P1", "Ana"] == pytest.approx(20.0)
+    assert escudo.loc["P1", "Ana"] == pytest.approx(20.0)
+    assert espada.loc["P1", "Ana"] == pytest.approx(10.0)
+
+    # general=1 (worst) -> descarte 0; dependency=1 (barely matters) -> 0,
+    # so escudo/espada both collapse to descarte's 0.
+    escudo, espada, descarte, _ = matrices_from_raw_sheet(_raw_sheet(general=1.0, dependency=1.0))
+    assert descarte.loc["P1", "Ana"] == pytest.approx(0.0)
+    assert escudo.loc["P1", "Ana"] == pytest.approx(0.0)
+    assert espada.loc["P1", "Ana"] == pytest.approx(0.0)
+
+    # general=4 (midpoint) -> descarte 10; dependency=4 (midpoint) -> 5.
+    _, _, descarte, _ = matrices_from_raw_sheet(_raw_sheet(general=4.0, dependency=4.0))
+    assert descarte.loc["P1", "Ana"] == pytest.approx(10.0)
+
+
+def test_general_score_outside_1_to_7_raises():
+    with pytest.raises(ValueError, match=r"\[1\.0, 7\.0\]"):
+        matrices_from_raw_sheet(_raw_sheet(general=8.0, dependency=4.0))
+
+
+def test_dependency_outside_1_to_7_raises():
+    with pytest.raises(ValueError, match=r"\[1\.0, 7\.0\]"):
+        matrices_from_raw_sheet(_raw_sheet(general=4.0, dependency=0.0))
+
+
 def test_matrices_from_real_sheet_fixture(sample_raw_df):
     """Regression: parsing the real 'Matriz Simple' sheet fixture produces
     the expected shape and player names."""
