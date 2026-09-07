@@ -30,6 +30,12 @@ MIN_SCORE, MAX_SCORE = 0.0, 20.0
 INPUT_MIN_SCORE, INPUT_MAX_SCORE = 1.0, 7.0
 INPUT_MIN_DEPENDENCY, INPUT_MAX_DEPENDENCY = 1.0, 7.0
 DEFAULT_DEPENDENCIA_SUFFIX = " Dependencia Mapa"
+# A blank general-score cell in the "Matriz Simple" sheet (a player/matchup
+# nobody rated yet) defaults to this neutral midpoint of the 1-7 input scale
+# -- "assume a coinflip" -- rather than blocking the whole model from loading.
+DEFAULT_GENERAL_SCORE_INPUT = 4.0
+DEFAULT_GENERAL_SCORE = (DEFAULT_GENERAL_SCORE_INPUT - INPUT_MIN_SCORE) / (INPUT_MAX_SCORE - INPUT_MIN_SCORE) \
+    * (MAX_SCORE - MIN_SCORE) + MIN_SCORE
 
 
 def clip_scores(*dfs: pd.DataFrame) -> Tuple[pd.DataFrame, ...]:
@@ -101,7 +107,18 @@ def impute_dependent_matrices(
     assumption versus real hand-entered data.
     """
     if descarte_df.isna().to_numpy().any():
-        raise ValueError("descarte_df must be fully filled in -- it has no fallback/default of its own.")
+        missing_cells = [(i, j) for i in descarte_df.index for j in descarte_df.columns
+                          if pd.isna(descarte_df.loc[i, j])]
+        raise ValueError(
+            f"descarte_df is missing {len(missing_cells)} matchup(s) -- every Team1 player needs a "
+            f"score against every Team2 opponent, e.g. {missing_cells[:5]}. This function has no "
+            f"default for a missing descarte cell (unlike map_dependency_df, which defaults to "
+            f"{DEFAULT_MAP_DEPENDENCY}). If you're loading from the \"Matriz Simple\" sheet: "
+            f"build_matrices_from_simple_format already defaults a blank general-score cell to "
+            f"{DEFAULT_GENERAL_SCORE_INPUT} on the 1-7 scale, so seeing this error there usually "
+            f"means a whole player/row is missing from the sheet, not just one cell -- check that "
+            f"every Team1 player has their own row and every Team2 opponent has its own column."
+        )
     _check_no_duplicate_labels(descarte_df)
 
     if map_dependency_df is None:
@@ -208,7 +225,10 @@ def build_matrices_from_simple_format(
     filled -- real cells always win; descarte_df falls back to the
     matriz_simple general column (post-rescale), and escudo_df/espada_df
     fall back to descarte (+/-) that matchup's dependency (post-rescale),
-    via impute_dependent_matrices.
+    via impute_dependent_matrices. A matchup left blank everywhere (no
+    override, no general-score cell in the sheet) defaults to
+    DEFAULT_GENERAL_SCORE -- the internal equivalent of
+    DEFAULT_GENERAL_SCORE_INPUT (a neutral coinflip) -- rather than raising.
 
     Returns (escudo_filled, espada_filled, descarte_filled, was_imputed_df).
     """
@@ -230,6 +250,9 @@ def build_matrices_from_simple_format(
         descarte_df = pd.DataFrame(np.nan, index=team1_players, columns=team2_players)
     descarte_df = descarte_df.reindex(index=team1_players, columns=team2_players)
     descarte_filled = descarte_df.where(~descarte_df.isna(), general_df)
+    # A matchup nobody rated at all (blank in both an override and the sheet
+    # itself) defaults to a neutral coinflip rather than blocking the model.
+    descarte_filled = descarte_filled.fillna(DEFAULT_GENERAL_SCORE)
 
     escudo_filled, espada_filled, was_imputed_df = impute_dependent_matrices(
         descarte_filled, map_dependency_df=dependency_df, escudo_df=escudo_df, espada_df=espada_df)

@@ -1,7 +1,12 @@
 import pandas as pd
 import pytest
 
-from pairing_engine.imputation import clip_scores, impute_dependent_matrices, matrices_from_raw_sheet
+from pairing_engine.imputation import (
+    DEFAULT_GENERAL_SCORE,
+    clip_scores,
+    impute_dependent_matrices,
+    matrices_from_raw_sheet,
+)
 
 
 def _raw_sheet(general, dependency):
@@ -46,6 +51,52 @@ def test_general_score_outside_1_to_7_raises():
 def test_dependency_outside_1_to_7_raises():
     with pytest.raises(ValueError, match=r"\[1\.0, 7\.0\]"):
         matrices_from_raw_sheet(_raw_sheet(general=4.0, dependency=0.0))
+
+
+def test_blank_general_score_defaults_to_neutral_coinflip():
+    """A player who hasn't rated a matchup yet leaves that cell blank in the
+    sheet -- that must default to a neutral score (4 on the 1-7 scale, the
+    internal midpoint) rather than blocking the whole model from loading."""
+    raw = pd.DataFrame({
+        "Player": ["P1"],
+        "Ana": [None],
+        "Ana Dependencia Mapa": [3.0],
+    })
+    _, _, descarte, _ = matrices_from_raw_sheet(raw)
+    assert descarte.loc["P1", "Ana"] == pytest.approx(DEFAULT_GENERAL_SCORE)
+
+
+def test_sheet_with_mostly_blank_rows_loads_instead_of_raising():
+    """Regression: a sheet where only one Team1 player has rated any
+    matchups (the rest of the rows are entirely blank) used to raise
+    "descarte_df must be fully filled in"; it must now load, defaulting
+    every unrated matchup to a neutral coinflip."""
+    raw = pd.DataFrame({
+        "Player": ["Necron", "Death Guard", "IK"],
+        "Votann": [1.0, None, None],
+        "Votann Dependencia Mapa": [2.0, None, None],
+        "Aeldari": [4.0, None, None],
+        "Aeldari Dependencia Mapa": [5.0, None, None],
+    })
+    escudo, espada, descarte, _ = matrices_from_raw_sheet(raw)
+    assert descarte.shape == (3, 2)
+    assert descarte.loc["Death Guard", "Votann"] == pytest.approx(DEFAULT_GENERAL_SCORE)
+    assert descarte.loc["IK", "Aeldari"] == pytest.approx(DEFAULT_GENERAL_SCORE)
+
+
+def test_missing_descarte_cell_error_is_descriptive():
+    """impute_dependent_matrices itself (the lower-level function, used
+    directly by callers who bypass the "Matriz Simple" bridge and its
+    default) still has no fallback for a missing descarte cell -- but the
+    error must explain what's missing and where the default lives instead
+    of just saying "must be fully filled in"."""
+    descarte = pd.DataFrame({"Ana": [10.0, None]}, index=["Juan", "Pedro"])
+    with pytest.raises(ValueError) as exc_info:
+        impute_dependent_matrices(descarte)
+    message = str(exc_info.value)
+    assert "Pedro" in message and "Ana" in message
+    assert "Matriz Simple" in message
+    assert "1 matchup" in message
 
 
 def test_matrices_from_real_sheet_fixture(sample_raw_df):
