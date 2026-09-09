@@ -1,35 +1,32 @@
 """
-Spreadsheet-format bridging and map-dependency imputation.
+Spreadsheet-format bridging: turns the "Matriz Simple" sheet -- the only
+input format this app receives -- into the escudo/espada/descarte matrices
+the rest of the engine (zero_sum, formats.n_player) computes with.
 
-Players normally only fill in one "general" score per matchup (descarte_df)
-plus how map-dependent that matchup is, both on the player-facing 1-7 scale
-(1 = worst/least, 7 = best/most) -- see INPUT_MIN_SCORE/INPUT_MAX_SCORE and
-INPUT_MIN_DEPENDENCY/INPUT_MAX_DEPENDENCY below. Those get linearly rescaled
-onto the internal [0, 20]/[0, 10] ranges the rest of the engine (zero_sum,
-formats.n_player) actually computes with, before this derives the full
-escudo_df ("shield", scores boosted by map dependency) and espada_df
-("sword", scores reduced by map dependency) from that -- while still trusting
-any cells a team filled in by hand instead. None of this assumes any
-particular number of players per team -- it operates on whatever
-Team1-rows x Team2-columns matrix shape it's given.
+Players fill in one general score per matchup plus two independent map
+modifiers, all on player-facing scales: the general score is 1-7 (1 =
+worst/least, 7 = best/most), and each modifier is a signed -3..+3 delta on
+that same scale -- one for when WE pick the map (feeds escudo), one for
+when the OPPONENT picks the map (feeds espada). The combined score is
+clipped back to the 1-7 range before everything is rescaled onto the
+internal 0-20 scale the engine actually uses.
 """
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
 
-DEFAULT_MAP_DEPENDENCY = 0.0
-MIN_DEPENDENCY, MAX_DEPENDENCY = 0.0, 10.0
 MIN_SCORE, MAX_SCORE = 0.0, 20.0
-# Player-facing "Matriz Simple" input scale -- both the general score and the
-# map-dependency columns use this same 1-7 range, rescaled onto the internal
-# ranges above by _rescale_input_block() in build_matrices_from_simple_format.
+# Player-facing "Matriz Simple" input scale.
 INPUT_MIN_SCORE, INPUT_MAX_SCORE = 1.0, 7.0
-INPUT_MIN_DEPENDENCY, INPUT_MAX_DEPENDENCY = 1.0, 7.0
-DEFAULT_DEPENDENCIA_SUFFIX = " Dependencia Mapa"
+INPUT_MODIFIER_MIN, INPUT_MODIFIER_MAX = -3.0, 3.0
+# Map-modifier column suffixes: "si elijo yo" (our map choice) feeds escudo,
+# "si elije el rival" (their map choice) feeds espada.
+DEPENDENCIA_SUFFIX_PROPIO = " Dependencia Mapa si elijo yo"
+DEPENDENCIA_SUFFIX_RIVAL = " Dependencia Mapa si elije el rival"
 # A blank general-score cell in the "Matriz Simple" sheet (a player/matchup
 # nobody rated yet) defaults to this neutral midpoint of the 1-7 input scale
 # -- "assume a coinflip" -- rather than blocking the whole model from loading.
@@ -40,8 +37,8 @@ DEFAULT_GENERAL_SCORE = (DEFAULT_GENERAL_SCORE_INPUT - INPUT_MIN_SCORE) / (INPUT
 
 def clip_scores(*dfs: pd.DataFrame) -> Tuple[pd.DataFrame, ...]:
     """Clamp one or more score matrices to the valid [0, 20] range, shape/
-    labels untouched. Used both internally during imputation and to
-    sanitize hand-edited matrices coming back from the app's in-app editor.
+    labels untouched. Used to sanitize hand-edited matrices coming back
+    from the app's in-app editor.
     """
     return tuple(df.clip(lower=MIN_SCORE, upper=MAX_SCORE) for df in dfs)
 
@@ -56,219 +53,154 @@ def _check_no_duplicate_labels(df: pd.DataFrame) -> None:
         )
 
 
-def _validate_dependency_df(map_dependency_df: pd.DataFrame, descarte_df: pd.DataFrame) -> pd.DataFrame:
-    """Reindex onto descarte_df's exact shape (missing rows/cols/cells -> NaN,
-    which later becomes the default of 0), and warn about any out-of-range
-    values instead of silently misbehaving."""
-    aligned = map_dependency_df.reindex(index=descarte_df.index, columns=descarte_df.columns)
-    out_of_range = aligned[(aligned < MIN_DEPENDENCY) | (aligned > MAX_DEPENDENCY)]
+def _validate_range(df: pd.DataFrame, min_val: float, max_val: float, label: str) -> None:
+    out_of_range = df[(df < min_val) | (df > max_val)]
     if out_of_range.notna().to_numpy().any():
-        bad_cells = [(i, j, aligned.loc[i, j]) for i in aligned.index for j in aligned.columns
-                     if pd.notna(aligned.loc[i, j]) and not (MIN_DEPENDENCY <= aligned.loc[i, j] <= MAX_DEPENDENCY)]
+        bad_cells = [(i, j, df.loc[i, j]) for i in df.index for j in df.columns
+                     if pd.notna(df.loc[i, j]) and not (min_val <= df.loc[i, j] <= max_val)]
         raise ValueError(
-            f"map_dependency_df has {len(bad_cells)} value(s) outside the valid "
-            f"[{MIN_DEPENDENCY}, {MAX_DEPENDENCY}] range, e.g. {bad_cells[:5]}. "
-            f"Fix these (or leave them blank/NaN to default to {DEFAULT_MAP_DEPENDENCY})."
+            f"{label} has {len(bad_cells)} value(s) outside the valid [{min_val}, {max_val}] "
+            f"range, e.g. {bad_cells[:5]}."
         )
-    return aligned
 
 
-def impute_dependent_matrices(
-    descarte_df: pd.DataFrame,
-    map_dependency_df: Optional[pd.DataFrame] = None,
-    escudo_df: Optional[pd.DataFrame] = None,
-    espada_df: Optional[pd.DataFrame] = None,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Fill in any missing escudo_df/espada_df cells from descarte_df plus a
-    per-matchup map-dependency value, leaving any hand-filled cells as-is.
+def _rescale_input_block(df: pd.DataFrame, in_min: float, in_max: float,
+                          out_min: float, out_max: float, label: str) -> pd.DataFrame:
+    """Linearly rescale a raw "Matriz Simple" input block (values expected in
+    [in_min, in_max]) onto the internal [out_min, out_max] range the rest of
+    the engine computes with. NaN cells pass through unchanged.
 
-    Parameters
-    ----------
-    descarte_df : required, fully filled Team1-rows x Team2-columns matrix
-        of baseline (no-map-advantage) scores in [0, 20].
-    map_dependency_df : optional, same shape/index/columns as descarte_df,
-        values in [0, 10]. Any missing matchup (whole matrix is None, or
-        individual cells are NaN, or rows/columns are simply absent)
-        defaults to 0 -- i.e. "the map has no effect on this matchup",
-        which makes the imputed escudo/espada cell identical to descarte.
-    escudo_df, espada_df : optional, same shape as descarte_df. Pass None
-        to fully derive from descarte_df + map_dependency_df. Pass a
-        partially filled DataFrame (NaN for the matchups you don't know)
-        to have ONLY those specific cells imputed -- anything you did
-        fill in is trusted and left untouched.
-
-    Returns
-    -------
-    (escudo_df_filled, espada_df_filled, was_imputed_df) -- the first two
-    are fully populated (no NaNs), clipped to [0, 20]. `was_imputed_df`
-    is a same-shape boolean DataFrame, True wherever EITHER escudo or
-    espada was auto-filled for that matchup, so you can audit at a
-    glance how much of the model is resting on the map-dependency
-    assumption versus real hand-entered data.
+    Raises if any non-NaN cell falls outside [in_min, in_max] -- almost
+    always a typo, a stray formula, or a cell still on the wrong scale.
     """
-    if descarte_df.isna().to_numpy().any():
-        missing_cells = [(i, j) for i in descarte_df.index for j in descarte_df.columns
-                          if pd.isna(descarte_df.loc[i, j])]
-        raise ValueError(
-            f"descarte_df is missing {len(missing_cells)} matchup(s) -- every Team1 player needs a "
-            f"score against every Team2 opponent, e.g. {missing_cells[:5]}. This function has no "
-            f"default for a missing descarte cell (unlike map_dependency_df, which defaults to "
-            f"{DEFAULT_MAP_DEPENDENCY}). If you're loading from the \"Matriz Simple\" sheet: "
-            f"build_matrices_from_simple_format already defaults a blank general-score cell to "
-            f"{DEFAULT_GENERAL_SCORE_INPUT} on the 1-7 scale, so seeing this error there usually "
-            f"means a whole player/row is missing from the sheet, not just one cell -- check that "
-            f"every Team1 player has their own row and every Team2 opponent has its own column."
-        )
-    _check_no_duplicate_labels(descarte_df)
-
-    if map_dependency_df is None:
-        dependency = pd.DataFrame(np.nan, index=descarte_df.index, columns=descarte_df.columns)
-    else:
-        dependency = _validate_dependency_df(map_dependency_df, descarte_df)
-    dependency = dependency.fillna(DEFAULT_MAP_DEPENDENCY)
-
-    if escudo_df is None:
-        escudo_df = pd.DataFrame(np.nan, index=descarte_df.index, columns=descarte_df.columns)
-    else:
-        escudo_df = escudo_df.reindex(index=descarte_df.index, columns=descarte_df.columns)
-
-    if espada_df is None:
-        espada_df = pd.DataFrame(np.nan, index=descarte_df.index, columns=descarte_df.columns)
-    else:
-        espada_df = espada_df.reindex(index=descarte_df.index, columns=descarte_df.columns)
-
-    escudo_missing = escudo_df.isna()
-    espada_missing = espada_df.isna()
-
-    escudo_imputed_values = (descarte_df + dependency).clip(lower=MIN_SCORE, upper=MAX_SCORE)
-    espada_imputed_values = (descarte_df - dependency).clip(lower=MIN_SCORE, upper=MAX_SCORE)
-
-    escudo_filled = escudo_df.where(~escudo_missing, escudo_imputed_values).clip(lower=MIN_SCORE, upper=MAX_SCORE)
-    espada_filled = espada_df.where(~espada_missing, espada_imputed_values).clip(lower=MIN_SCORE, upper=MAX_SCORE)
-
-    was_imputed_df = escudo_missing | espada_missing
-
-    return escudo_filled, espada_filled, was_imputed_df
+    _validate_range(df, in_min, in_max, label)
+    return (df - in_min) / (in_max - in_min) * (out_max - out_min) + out_min
 
 
-def set_index_from_leftover_column(raw_df: pd.DataFrame, dependencia_suffix: str = DEFAULT_DEPENDENCIA_SUFFIX) -> pd.DataFrame:
-    """A "Matriz Simple" sheet has one row per Team1 player, one column per
-    Team2 opponent (the general/default score), one dependency column per
-    opponent (named f"{opponent}{dependencia_suffix}"), and one extra column
-    holding the Team1 player's own name/label. This detects that label
-    column (whatever's left over once opponent + dependency columns are
-    accounted for -- no hardcoded column name needed) and sets it as the
-    index, so the result is ready for build_matrices_from_simple_format().
+def set_index_from_leftover_column(
+    raw_df: pd.DataFrame,
+    suffix_propio: str = DEPENDENCIA_SUFFIX_PROPIO,
+    suffix_rival: str = DEPENDENCIA_SUFFIX_RIVAL,
+) -> pd.DataFrame:
+    """A "Matriz Simple" sheet has one row per Team1 player, and for each
+    Team2 opponent 3 columns: the general/default score, a
+    f"{opponent}{suffix_propio}" map modifier (our choice -> escudo), and a
+    f"{opponent}{suffix_rival}" map modifier (their choice -> espada). Plus
+    one extra column holding the Team1 player's own name/label. This
+    detects that label column (whatever's left over once opponent +
+    modifier columns are accounted for -- no hardcoded column name needed)
+    and sets it as the index, so the result is ready for
+    build_matrices_from_simple_format().
     """
-    dep_cols = [c for c in raw_df.columns if c.endswith(dependencia_suffix)]
-    dep_opponents = {c[: -len(dependencia_suffix)] for c in dep_cols}
-    general_cols = [c for c in raw_df.columns if not c.endswith(dependencia_suffix)]
-    paired_opponents = {c for c in general_cols if c in dep_opponents}
+    propio_opponents = {c[: -len(suffix_propio)] for c in raw_df.columns if c.endswith(suffix_propio)}
+    rival_opponents = {c[: -len(suffix_rival)] for c in raw_df.columns if c.endswith(suffix_rival)}
+    general_cols = [c for c in raw_df.columns if not c.endswith(suffix_propio) and not c.endswith(suffix_rival)]
+    general_set = set(general_cols)
 
-    missing_general = dep_opponents - set(general_cols)
-    if missing_general:
+    paired_opponents = general_set & propio_opponents & rival_opponents
+    # Names mentioned via at least one modifier suffix but not fully paired
+    # across all 3 columns (general + both modifiers) -- typos/incomplete
+    # entries, not candidates for the leftover label column.
+    incomplete = (propio_opponents | rival_opponents) - paired_opponents
+    if incomplete:
+        details = []
+        for name in sorted(incomplete):
+            missing = []
+            if name not in general_set:
+                missing.append(f"the general score column {name!r}")
+            if name not in propio_opponents:
+                missing.append(f"{name + suffix_propio!r}")
+            if name not in rival_opponents:
+                missing.append(f"{name + suffix_rival!r}")
+            details.append(f"{name!r} (missing {', '.join(missing)})")
         raise ValueError(
-            f"Dependency column(s) for {sorted(missing_general)} have no matching general score "
-            f"column -- check for a typo between the two column names."
+            f"Incomplete opponent column set for: {'; '.join(details)}. Each opponent needs all 3 "
+            f"columns: a general score, '{{name}}{suffix_propio}', and '{{name}}{suffix_rival}'."
         )
 
     leftover = [c for c in general_cols if c not in paired_opponents]
     if len(leftover) != 1:
         raise ValueError(
             f"Expected exactly 1 leftover label column, found {len(leftover)}: {leftover}. "
-            f"If one of these is meant to be an opponent column, make sure it has a matching "
-            f"'{{name}}{dependencia_suffix}' column."
+            f"If one of these is meant to be an opponent column, make sure it has matching "
+            f"'{{name}}{suffix_propio}' and '{{name}}{suffix_rival}' columns."
         )
     return raw_df.set_index(leftover[0])
 
 
-def _rescale_input_block(df: pd.DataFrame, in_min: float, in_max: float,
-                          out_min: float, out_max: float, label: str) -> pd.DataFrame:
-    """Linearly rescale a raw "Matriz Simple" input block (values expected in
-    [in_min, in_max], e.g. the player-facing 1-7 score) onto the internal
-    [out_min, out_max] range the rest of the engine computes with (e.g. the
-    0-20 descarte scale). NaN cells (blank in the sheet) pass through
-    unchanged -- they're filled in later by impute_dependent_matrices'
-    defaults, not here.
-
-    Raises if any non-NaN cell falls outside [in_min, in_max] -- almost
-    always a typo, a stray formula, or a cell still on the old scale.
-    """
-    out_of_range = df[(df < in_min) | (df > in_max)]
-    if out_of_range.notna().to_numpy().any():
-        bad_cells = [(i, j, df.loc[i, j]) for i in df.index for j in df.columns
-                     if pd.notna(df.loc[i, j]) and not (in_min <= df.loc[i, j] <= in_max)]
-        raise ValueError(
-            f"{label} has {len(bad_cells)} value(s) outside the valid [{in_min}, {in_max}] "
-            f"range, e.g. {bad_cells[:5]}."
-        )
-    return (df - in_min) / (in_max - in_min) * (out_max - out_min) + out_min
-
-
 def build_matrices_from_simple_format(
-    escudo_df: Optional[pd.DataFrame],
-    espada_df: Optional[pd.DataFrame],
-    descarte_df: Optional[pd.DataFrame],
     matriz_simple_df: pd.DataFrame,
-    dependencia_suffix: str = DEFAULT_DEPENDENCIA_SUFFIX,
+    suffix_propio: str = DEPENDENCIA_SUFFIX_PROPIO,
+    suffix_rival: str = DEPENDENCIA_SUFFIX_RIVAL,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Bridge for the "Matriz Simple" input format: one row per Team1
-    player (as the index), and for each Team2 opponent `p` two columns --
-    `p` (the general/default score) and `f"{p}{dependencia_suffix}"` (that
-    matchup's map-dependency). Both are on the player-facing 1-7 scale (see
-    INPUT_MIN_SCORE/INPUT_MAX_SCORE and INPUT_MIN_DEPENDENCY/
-    INPUT_MAX_DEPENDENCY) and get rescaled here onto the internal 0-20/0-10
-    ranges (MIN_SCORE/MAX_SCORE, MIN_DEPENDENCY/MAX_DEPENDENCY) before
-    anything else touches them.
+    """Bridge for the "Matriz Simple" input format: one row per Team1 player
+    (as the index), and for each Team2 opponent `p` three columns -- `p`
+    (the general score), f"{p}{suffix_propio}" (map modifier when WE choose
+    the map, feeds escudo), and f"{p}{suffix_rival}" (map modifier when the
+    OPPONENT chooses, feeds espada). All on the player-facing 1-7/±3 scales
+    (see INPUT_MIN_SCORE/INPUT_MAX_SCORE, INPUT_MODIFIER_MIN/
+    INPUT_MODIFIER_MAX).
 
-    Any of escudo_df/espada_df/descarte_df can be None or partially
-    filled -- real cells always win; descarte_df falls back to the
-    matriz_simple general column (post-rescale), and escudo_df/espada_df
-    fall back to descarte (+/-) that matchup's dependency (post-rescale),
-    via impute_dependent_matrices. A matchup left blank everywhere (no
-    override, no general-score cell in the sheet) defaults to
-    DEFAULT_GENERAL_SCORE -- the internal equivalent of
-    DEFAULT_GENERAL_SCORE_INPUT (a neutral coinflip) -- rather than raising.
+    escudo/espada are computed by adding the matching modifier directly to
+    the general score ON THE INPUT SCALE, clipping the result back to
+    [INPUT_MIN_SCORE, INPUT_MAX_SCORE] (a modifier can never push a score
+    outside what a 1-7 rating could represent), THEN rescaling -- so the
+    exact same rescale used for the general score applies to all three. A
+    blank modifier cell means "no map effect" (0). A matchup left blank
+    everywhere defaults to DEFAULT_GENERAL_SCORE for all three matrices.
 
-    Returns (escudo_filled, espada_filled, descarte_filled, was_imputed_df).
+    Returns (escudo, espada, descarte, was_imputed_df) -- was_imputed_df is
+    a same-shape boolean DataFrame, True wherever the matchup was left
+    blank in the sheet and defaulted, so you can audit at a glance how much
+    of the model rests on the neutral-coinflip default versus real input.
     """
-    team2_players = [c for c in matriz_simple_df.columns if not c.endswith(dependencia_suffix)]
+    team2_players = [c for c in matriz_simple_df.columns
+                      if not c.endswith(suffix_propio) and not c.endswith(suffix_rival)]
     team1_players = matriz_simple_df.index
 
-    general_df = matriz_simple_df[team2_players].reindex(index=team1_players, columns=team2_players)
-    general_df = _rescale_input_block(general_df, INPUT_MIN_SCORE, INPUT_MAX_SCORE, MIN_SCORE, MAX_SCORE,
-                                       "matriz_simple_df's general score columns")
+    general_input = matriz_simple_df[team2_players].reindex(index=team1_players, columns=team2_players)
+    _validate_range(general_input, INPUT_MIN_SCORE, INPUT_MAX_SCORE, "matriz_simple_df's general score columns")
 
-    dependency_df = matriz_simple_df[[f"{p}{dependencia_suffix}" for p in team2_players]].copy()
-    dependency_df.columns = team2_players
-    dependency_df = dependency_df.reindex(index=team1_players, columns=team2_players)
-    dependency_df = _rescale_input_block(dependency_df, INPUT_MIN_DEPENDENCY, INPUT_MAX_DEPENDENCY,
-                                          MIN_DEPENDENCY, MAX_DEPENDENCY,
-                                          "matriz_simple_df's map-dependency columns")
+    propio_input = matriz_simple_df[[f"{p}{suffix_propio}" for p in team2_players]].copy()
+    propio_input.columns = team2_players
+    propio_input = propio_input.reindex(index=team1_players, columns=team2_players)
+    _validate_range(propio_input, INPUT_MODIFIER_MIN, INPUT_MODIFIER_MAX,
+                     "matriz_simple_df's 'si elijo yo' map-modifier columns")
+    propio_input = propio_input.fillna(0.0)
 
-    if descarte_df is None:
-        descarte_df = pd.DataFrame(np.nan, index=team1_players, columns=team2_players)
-    descarte_df = descarte_df.reindex(index=team1_players, columns=team2_players)
-    descarte_filled = descarte_df.where(~descarte_df.isna(), general_df)
-    # A matchup nobody rated at all (blank in both an override and the sheet
-    # itself) defaults to a neutral coinflip rather than blocking the model.
-    descarte_filled = descarte_filled.fillna(DEFAULT_GENERAL_SCORE)
+    rival_input = matriz_simple_df[[f"{p}{suffix_rival}" for p in team2_players]].copy()
+    rival_input.columns = team2_players
+    rival_input = rival_input.reindex(index=team1_players, columns=team2_players)
+    _validate_range(rival_input, INPUT_MODIFIER_MIN, INPUT_MODIFIER_MAX,
+                     "matriz_simple_df's 'si elije el rival' map-modifier columns")
+    rival_input = rival_input.fillna(0.0)
 
-    escudo_filled, espada_filled, was_imputed_df = impute_dependent_matrices(
-        descarte_filled, map_dependency_df=dependency_df, escudo_df=escudo_df, espada_df=espada_df)
+    was_imputed_df = general_input.isna()
+    general_input = general_input.fillna(DEFAULT_GENERAL_SCORE_INPUT)
 
-    return escudo_filled, espada_filled, descarte_filled, was_imputed_df
+    escudo_input = (general_input + propio_input).clip(lower=INPUT_MIN_SCORE, upper=INPUT_MAX_SCORE)
+    espada_input = (general_input + rival_input).clip(lower=INPUT_MIN_SCORE, upper=INPUT_MAX_SCORE)
+
+    descarte = _rescale_input_block(general_input, INPUT_MIN_SCORE, INPUT_MAX_SCORE, MIN_SCORE, MAX_SCORE,
+                                     "matriz_simple_df's general score columns")
+    escudo = _rescale_input_block(escudo_input, INPUT_MIN_SCORE, INPUT_MAX_SCORE, MIN_SCORE, MAX_SCORE,
+                                   "the combined escudo (general + 'si elijo yo') score")
+    espada = _rescale_input_block(espada_input, INPUT_MIN_SCORE, INPUT_MAX_SCORE, MIN_SCORE, MAX_SCORE,
+                                   "the combined espada (general + 'si elije el rival') score")
+
+    _check_no_duplicate_labels(descarte)
+
+    return escudo, espada, descarte, was_imputed_df
 
 
 def matrices_from_raw_sheet(
     raw_df: pd.DataFrame,
-    dependencia_suffix: str = DEFAULT_DEPENDENCIA_SUFFIX,
+    suffix_propio: str = DEPENDENCIA_SUFFIX_PROPIO,
+    suffix_rival: str = DEPENDENCIA_SUFFIX_RIVAL,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """One-call convenience for the common case: a raw "Matriz Simple"
-    sheet grid (as returned by sheets.load_matrix), with no hand-filled
-    escudo/espada matrices to merge in. Returns
-    (escudo_filled, espada_filled, descarte_filled, was_imputed_df).
+    """One-call convenience: a raw "Matriz Simple" sheet grid (as returned by
+    sheets.load_matrix) straight to (escudo, espada, descarte, was_imputed_df).
     """
-    matriz_simple = set_index_from_leftover_column(raw_df, dependencia_suffix)
+    matriz_simple = set_index_from_leftover_column(raw_df, suffix_propio, suffix_rival)
     numeric = matriz_simple.apply(pd.to_numeric, errors="coerce")
-    return build_matrices_from_simple_format(None, None, None, numeric, dependencia_suffix)
+    return build_matrices_from_simple_format(numeric, suffix_propio, suffix_rival)

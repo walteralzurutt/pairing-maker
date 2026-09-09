@@ -105,11 +105,11 @@ with st.expander("Matriz de predicciones (escudo / espada / descarte, y qué cel
     )
     st.markdown("**descarte** (base)")
     descarte_edit = st.data_editor(descarte, num_rows="fixed", use_container_width=True, key="descarte_editor")
-    st.markdown("**escudo** (con ventaja de mapa)")
+    st.markdown("**escudo** (según elección de mapa propia)")
     escudo_edit = st.data_editor(escudo, num_rows="fixed", use_container_width=True, key="escudo_editor")
-    st.markdown("**espada** (con penalización de mapa)")
+    st.markdown("**espada** (según elección de mapa del rival)")
     espada_edit = st.data_editor(espada, num_rows="fixed", use_container_width=True, key="espada_editor")
-    st.markdown("**derivado automáticamente según dependencia de mapa** (True = no ingresado a mano)")
+    st.markdown("**dejado en blanco en la planilla** (True = se usó un valor neutro por defecto)")
     st.dataframe(st.session_state.was_imputed, use_container_width=True)
 
     if st.button("Aplicar cambios a la matriz"):

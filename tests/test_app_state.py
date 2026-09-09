@@ -76,7 +76,7 @@ def test_editing_matrix_and_applying_rebuilds_model_and_resets_round(sample_raw_
     round, without needing to touch the source spreadsheet."""
     at = _load_app(sample_raw_df)
     with patch.object(sheets_module, "load_matrix_from_url", lambda url: sample_raw_df):
-        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == pytest.approx(11.666667)
+        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == pytest.approx(13.333333)
 
         # Simulate editing row 0 ("Death Guard"), column "Marines" -- this is
         # the internal shape st.data_editor's widget state actually takes;
@@ -116,6 +116,6 @@ def test_reloading_a_different_sheet_clears_stale_editor_state(sample_raw_df):
         apply_btn.click().run()
 
         assert not at.exception
-        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == pytest.approx(11.666667), (
+        assert at.session_state["escudo"].loc["Death Guard", "Marines"] == pytest.approx(13.333333), (
             "stale data_editor state from the previous sheet load leaked into the fresh reload"
         )

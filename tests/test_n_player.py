@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from pairing_engine.formats import n_player
+from pairing_engine.imputation import matrices_from_raw_sheet
 
 
 # ---------------------------------------------------------------------
@@ -45,13 +46,14 @@ def test_naive_swords_prefers_best_average_descarte(sample_model):
 def test_recommend_shield_sets_shield_explanation(sample_model):
     session = n_player.LivePairingSession(sample_model, my_team="team1")
     session.recommend_shield()
-    # on the fixture data the recommended shield (Marines) matches the naive
-    # pick too -- reassurance case, but still names the concrete predicted
-    # matchup/probability/points rather than a bare "coincide" one-liner
+    # on the fixture data the recommended shield (Death Guard) differs from
+    # the naive best-average-escudo pick (Marines), but both happen to trace
+    # to the same predicted opponent/value here -- no "sacrifice" caveat
     assert session.shield_explanation == (
-        "Asumiendo que el escudo rival es IK (su elección más probable), hay una probabilidad "
-        "del 60% de que tu escudo (Marines) termine enfrentando a Necron, ganando 20.0 puntos. "
-        "Esta también es la opción con mejor promedio individual, así que coincide con la intuición."
+        "Asumiendo que el escudo rival es Marines (su elección más probable): con tu escudo "
+        "recomendado (Death Guard) hay un 100% de probabilidad de enfrentar a IK, ganando 13.3 "
+        "puntos. Con Marines (el de mejor promedio individual), hay un 56% de enfrentar a IK, "
+        "ganando 13.3 puntos."
     )
 
 
@@ -188,6 +190,46 @@ def test_role_assignment_leftover_matches_always_descarte():
     assert roles.count("escudo") == 1
     assert roles.count("espada") == 1
     assert roles.count("descarte") == len(players_a) - 2
+
+
+def test_correct_matrix_used_per_role_end_to_end():
+    """Integration test starting from a raw "Matriz Simple" sheet (not
+    hand-built matrices): every opponent's "si elijo yo" modifier is +3 and
+    "si elije el rival" is -3, guaranteeing escudo > descarte > espada
+    strictly for EVERY cell. Walking a full session and checking each
+    match's score against the correspondingly-named matrix (not just any
+    plausible value) proves the whole chain -- sheet cell -> matrix built
+    -> value picked up for that match's actual role -- is wired correctly,
+    not just the engine in isolation (already covered above).
+    """
+    players_a = ["A1", "A2", "A3", "A4"]
+    players_b = ["B1", "B2", "B3", "B4"]
+    raw = pd.DataFrame({"": players_a})
+    for b in players_b:
+        raw[b] = 4.0
+        raw[f"{b} Dependencia Mapa si elijo yo"] = 3.0
+        raw[f"{b} Dependencia Mapa si elije el rival"] = -3.0
+
+    escudo, espada, descarte, _ = matrices_from_raw_sheet(raw)
+    # sanity check the setup actually produces 3 distinct matrices, by construction
+    assert (escudo.to_numpy() > descarte.to_numpy()).all()
+    assert (descarte.to_numpy() > espada.to_numpy()).all()
+
+    model = n_player.build_model(escudo, espada, descarte)
+    session = n_player.LivePairingSession(model, my_team="team1")
+    my_report, opp_report = session.recommend_shield()
+    session.lock_shields(my_report.iloc[0]["option"], opp_report.iloc[0]["option"])
+    my_report, opp_report = session.swords_reports
+    session.lock_swords(my_report.iloc[0]["option"], opp_report.iloc[0]["option"])
+    my_report, opp_report = session.accept_reports
+    session.lock_accept(my_report.iloc[0]["option"], opp_report.iloc[0]["option"])
+
+    matrices = {"escudo": escudo, "espada": espada, "descarte": descarte}
+    for match in session.result["matches"]:
+        expected = matrices[match["matrix"]].loc[match["team1_player"], match["team2_player"]]
+        assert match["team1_score"] == pytest.approx(expected), (
+            f"match {match} did not use the {match['matrix']} matrix's value for this exact pairing"
+        )
 
 
 def test_full_session_real_data_sums_to_pool(sample_model):

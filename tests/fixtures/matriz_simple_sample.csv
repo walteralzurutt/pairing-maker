@@ -1,5 +1,5 @@
-Matriz base,Marines,Marines Dependencia Mapa,CSM,CSM Dependencia Mapa,IK,IK Dependencia Mapa,Necron,Necron Dependencia Mapa
-Death Guard,3,4,5,3,5,4,2,3
-Necron,6,,3,,2,,7,
-Astra,6,4,5,3,2,2,6,4
-Marines,4,3,3,4,7,2,5,5
+Matriz base,Marines,Marines Dependencia Mapa si elijo yo,Marines Dependencia Mapa si elije el rival,CSM,CSM Dependencia Mapa si elijo yo,CSM Dependencia Mapa si elije el rival,IK,IK Dependencia Mapa si elijo yo,IK Dependencia Mapa si elije el rival,Necron,Necron Dependencia Mapa si elijo yo,Necron Dependencia Mapa si elije el rival
+Death Guard,3,+2,-1,5,+1,-2,5,0,+1,2,-1,+2
+Necron,6,,,3,,,2,,,7,,
+Astra,6,+1,-1,5,-2,+1,2,+2,-2,6,-1,-1
+Marines,4,+3,-3,3,0,0,7,-2,+3,5,+1,-1
